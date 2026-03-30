@@ -1,6 +1,6 @@
 services:
   mview:
-    image: ghcr.io/Leonqn/mview:latest
+    image: ghcr.io/leonqn/mview:latest
     container_name: mview
     restart: unless-stopped
     environment:
