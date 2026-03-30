@@ -43,14 +43,6 @@ services:
       - ./data/downloads:/data/downloads
       - ./qbittorrent.conf:/config/qBittorrent/qBittorrent.conf
 
-  watchtower:
-    image: containrrr/watchtower
-    container_name: watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 300 mview
-
   plex:
     image: linuxserver/plex:latest
     container_name: plex
