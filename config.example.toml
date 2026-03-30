@@ -16,7 +16,7 @@ api_key = "your_tmdb_api_key"
 
 # Optional: Plex integration
 [plex]
-url = "http://plex:32400"
+url = "http://host.docker.internal:32400"
 token = "your_plex_token"
 
 # Optional: Telegram notifications
