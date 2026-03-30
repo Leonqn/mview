@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - mview{% endblock %}
+
+{% block content %}
+<h1>Tracked Media</h1>
+{% if media %}
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+    <button class="outline" onclick="filterMedia('all')" id="filter-all" style="margin:0;padding:4px 12px;">All</button>
+    <button class="outline secondary" onclick="filterMedia('anime')" id="filter-anime" style="margin:0;padding:4px 12px;">Anime</button>
+    <button class="outline secondary" onclick="filterMedia('series')" id="filter-series" style="margin:0;padding:4px 12px;">Series</button>
+    <button class="outline secondary" onclick="filterMedia('movie')" id="filter-movie" style="margin:0;padding:4px 12px;">Movies</button>
+</div>
+{% for item in media %}
+<article data-media-type="{{ item.media_type }}" style="display:flex;gap:0.75rem;align-items:flex-start;padding:0.5rem 0.75rem;{% if item.has_pending %}border-left:3px solid var(--pico-primary);{% endif %}">
+    {% if item.poster_url %}
+    <a href="/media/{{ item.id }}">
+        <img src="{{ item.poster_url }}" alt="{{ item.title }}" style="width:80px;min-width:80px;border-radius:4px;">
+    </a>
+    {% endif %}
+    <div style="flex:1;min-width:0;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                <a href="/media/{{ item.id }}">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</a>
+            </strong>
+            <button
+                hx-post="/api/media/{{ item.id }}/delete"
+                hx-target="closest article"
+                hx-swap="outerHTML"
+                hx-confirm="Remove {{ item.title }} from tracking?"
+                class="outline secondary"
+                style="margin:0;padding:1px 6px;font-size:0.75em;white-space:nowrap;flex-shrink:0;"
+            >Remove</button>
+        </div>
+        <small>{{ item.media_type | capitalize }}{% if item.tracking_seasons %} &mdash; {% for s in item.tracking_seasons %}S{{ s.season_number }}: {{ s.downloaded }}/{{ s.total }}{% if s.downloading %} ↓{% endif %}{% if s.pending %} <strong style="color:var(--pico-primary);">pending</strong>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</small>
+        {% if item.overview %}
+        <p style="margin:0.15rem 0 0;cursor:pointer;font-size:0.85em;color:var(--pico-muted-color);"
+           onclick="var t=this;t.textContent=t.dataset.full||t.textContent;t.style.color='';t.style.cursor=''"
+           data-full="{{ item.overview }}">{{ item.overview | truncate(100) }}</p>
+        {% endif %}
+    </div>
+</article>
+{% endfor %}
+<script>
+function filterMedia(type) {
+    document.querySelectorAll('article[data-media-type]').forEach(el => {
+        el.style.display = (type === 'all' || el.dataset.mediaType === type) ? 'flex' : 'none';
+    });
+    document.querySelectorAll('[id^="filter-"]').forEach(btn => {
+        btn.className = btn.id === 'filter-' + type ? 'outline' : 'outline secondary';
+    });
+}
+</script>
+{% else %}
+<p>No media tracked yet. <a href="/search">Search</a> to add something.</p>
+{% endif %}
+{% endblock %}

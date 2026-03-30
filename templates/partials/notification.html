@@ -1,0 +1,12 @@
+{% for notification in notifications %}
+<div class="notification-toast" role="alert" id="notification-{{ notification.id }}" style="padding:0.5rem 1rem;margin-bottom:0.5rem;border:1px solid var(--pico-muted-border-color);border-radius:4px;display:flex;justify-content:space-between;align-items:center;">
+    <span>{{ notification.message }}</span>
+    <button
+        hx-post="/api/notifications/{{ notification.id }}/read"
+        hx-target="#notification-{{ notification.id }}"
+        hx-swap="outerHTML"
+        class="outline"
+        style="margin:0;padding:0.25rem 0.5rem;font-size:0.8rem;"
+    >Dismiss</button>
+</div>
+{% endfor %}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Captcha — mview{% endblock %}
+
+{% block content %}
+<h2>RuTracker Captcha</h2>
+<div id="captcha-content"
+     hx-get="/api/captcha"
+     hx-trigger="load, every 3s [!document.querySelector('.captcha-form')]"
+     hx-swap="innerHTML">
+    <p>Loading...</p>
+</div>
+{% endblock %}

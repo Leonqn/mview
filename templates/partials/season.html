@@ -1,0 +1,122 @@
+<details style="border-bottom:1px solid var(--pico-muted-border-color);padding-bottom:0.5rem;margin-bottom:0.5rem;">
+    <summary>
+        <div style="display:inline-flex;justify-content:space-between;align-items:center;width:calc(100% - 2rem);gap:0.5rem;">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">
+                <strong>{% if entry.season.title %}{{ entry.season.title }}{% else %}Season {{ entry.season.season_number }}{% endif %}{% if entry.season.format %} <span style="font-weight:normal;font-size:0.8em;opacity:0.7;">({{ entry.season.format }})</span>{% endif %}</strong>
+                {% if entry.next_episode %}<span style="font-size:0.8em;opacity:0.7;margin-left:0.5rem;">Ep {{ entry.next_episode.episode_number }}{% if entry.next_episode.title %} &mdash; {{ entry.next_episode.title }}{% endif %}{% if entry.next_episode.air_date %} ({{ entry.next_episode.air_date }}){% endif %}</span>{% endif %}
+            </span>
+            <span style="display:flex;gap:0.5rem;align-items:center;flex-shrink:0;" onclick="event.stopPropagation();">
+                {% if entry.downloading and entry.download_progress and entry.download_progress >= 100 %}
+                <span id="season-progress-{{ entry.season.id }}" style="font-size:0.8em;opacity:0.6;white-space:nowrap;">Downloaded</span>
+                {% elif entry.downloading %}
+                <span
+                    id="season-progress-{{ entry.season.id }}"
+                    hx-get="/api/seasons/{{ entry.season.id }}/progress-badge"
+                    hx-trigger="every 10s"
+                    hx-swap="outerHTML"
+                    style="font-size:0.8em;color:orange;white-space:nowrap;"
+                >{% if entry.download_progress %}{{ entry.download_progress }}%{% else %}Downloading{% endif %}</span>
+                {% elif entry.torrents %}
+                <span style="font-size:0.8em;opacity:0.6;white-space:nowrap;">Downloaded</span>
+                {% endif %}
+                <button
+                    hx-post="/media/seasons/{{ entry.season.id }}/search"
+                    hx-target="#season-search-{{ entry.season.id }}"
+                    hx-swap="innerHTML"
+                    hx-indicator="#search-spinner-{{ entry.season.id }}"
+                    hx-on::after-request="this.closest('details').open=true"
+                    class="outline"
+                    style="margin:0;padding:2px 10px;font-size:0.85em;white-space:nowrap;"
+                >Search</button>
+                {% if entry.season.status == "ignored" %}
+                <button
+                    hx-post="/media/seasons/{{ entry.season.id }}/status"
+                    hx-target="#season-{{ entry.season.id }}"
+                    hx-swap="innerHTML"
+                    hx-vals='{"status":"tracking"}'
+                    class="outline secondary"
+                    style="margin:0;padding:2px 10px;font-size:0.85em;white-space:nowrap;min-width:5.5em;text-align:center;"
+                >Ignored</button>
+                {% else %}
+                <button
+                    hx-post="/media/seasons/{{ entry.season.id }}/status"
+                    hx-target="#season-{{ entry.season.id }}"
+                    hx-swap="innerHTML"
+                    hx-vals='{"status":"ignored"}'
+                    class="outline"
+                    style="margin:0;padding:2px 10px;font-size:0.85em;white-space:nowrap;min-width:5.5em;text-align:center;"
+                >Tracking</button>
+                {% endif %}
+            </span>
+        </div>
+    </summary>
+    <div id="season-search-{{ entry.season.id }}">
+        <span id="search-spinner-{{ entry.season.id }}" class="htmx-indicator">Searching...</span>
+    </div>
+    {% if entry.torrents %}
+    <table style="margin-top:0.5rem;">
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Tags</th>
+                <th>Size</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for torrent in entry.torrents %}
+            <tr id="torrent-{{ torrent.id }}">
+                <td><a href="https://rutracker.org/forum/viewtopic.php?t={{ torrent.rutracker_topic_id }}" target="_blank" rel="noopener">{{ torrent.title | truncate(60) }}</a></td>
+                <td>
+                    {% for tag in torrent.title | extract_tags %}
+                    <span style="border:1px solid var(--pico-muted-border-color);padding:1px 6px;border-radius:4px;font-size:0.8em;margin:1px;white-space:nowrap;">{{ tag }}</span>
+                    {% endfor %}
+                </td>
+                <td>{% if torrent.size_bytes %}{{ (torrent.size_bytes / 1073741824) | round(1) }} GB{% else %}—{% endif %}</td>
+                <td id="torrent-action-{{ torrent.id }}"
+                    {% if torrent.qbt_hash and (entry.torrent_progress[torrent.qbt_hash] is not defined or entry.torrent_progress[torrent.qbt_hash] < 100) %}
+                    hx-get="/api/torrents/{{ torrent.id }}/progress"
+                    hx-trigger="every 10s"
+                    hx-swap="innerHTML"
+                    {% endif %}
+                >
+                    {% if torrent.qbt_hash and entry.torrent_progress[torrent.qbt_hash] is defined %}
+                        {% if entry.torrent_progress[torrent.qbt_hash] >= 100 %}
+                        <span style="color:green;">Completed</span>
+                        {% else %}
+                        <span style="color:orange;">{{ entry.torrent_progress[torrent.qbt_hash] }}%</span>
+                        {% endif %}
+                    {% elif torrent.qbt_hash %}
+                    <span style="color:orange;">Downloading</span>
+                    {% else %}
+                    <span style="opacity:0.5;">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+    {% if entry.episodes %}
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Title</th>
+                <th>Air Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ep in entry.episodes %}
+            <tr>
+                <td>{{ ep.episode_number }}</td>
+                <td>{% if ep.title %}{{ ep.title }}{% else %}—{% endif %}</td>
+                <td>{% if ep.air_date %}{{ ep.air_date }}{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No episodes.</p>
+    {% endif %}
+</details>

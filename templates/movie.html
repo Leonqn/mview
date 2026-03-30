@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}{{ media.title }} - mview{% endblock %}
+
+{% block content %}
+<div class="grid" style="grid-template-columns: auto 1fr;">
+    <div>
+        {% if media.poster_url %}
+        <img src="{{ media.poster_url }}" alt="{{ media.title }}" style="max-width:300px;border-radius:8px;">
+        {% endif %}
+    </div>
+    <div>
+        <h1>{{ media.title }}{% if media.year %} ({{ media.year }}){% endif %}</h1>
+        {% if media.title_original %}
+        <p><em>{{ media.title_original }}</em></p>
+        {% endif %}
+        {% if media.overview %}
+        <p>{{ media.overview }}</p>
+        {% endif %}
+        <p><small>Status: {{ media.status | capitalize }}</small></p>
+
+        <nav>
+            {% if media.tmdb_id %}
+            <a href="https://www.themoviedb.org/movie/{{ media.tmdb_id }}" target="_blank" rel="noopener">TMDB</a>
+            {% endif %}
+            {% if media.imdb_id %}
+            <a href="https://www.imdb.com/title/{{ media.imdb_id }}" target="_blank" rel="noopener">IMDB</a>
+            {% endif %}
+            {% if media.kinopoisk_url %}
+            <a href="{{ media.kinopoisk_url }}" target="_blank" rel="noopener">Kinopoisk</a>
+            {% endif %}
+            {% if media.world_art_url %}
+            <a href="{{ media.world_art_url }}" target="_blank" rel="noopener">World Art</a>
+            {% endif %}
+        </nav>
+
+        <div style="margin-top:1rem;">
+            <form method="post" action="/api/media/{{ media.id }}/delete"
+                  onsubmit="return confirm('Are you sure you want to remove this movie from tracking?');">
+                <button type="submit" class="outline secondary">Remove from tracking</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<h2>Torrents</h2>
+<details>
+    <summary>Add torrent from RuTracker</summary>
+    <form method="post" action="/api/media/{{ media.id }}/add-torrent" style="margin-top:0.5rem;">
+        <div class="grid">
+            <input type="text" name="topic_id" placeholder="RuTracker topic ID (e.g. 6234567)" required>
+            <label><input type="checkbox" name="auto_update" checked> Auto-update</label>
+            <button type="submit" class="outline">Add</button>
+        </div>
+    </form>
+</details>
+{% if torrents %}
+<div style="overflow-x:auto;">
+<table>
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Quality</th>
+            <th>Size</th>
+            <th>Seeders</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for torrent in torrents %}
+        <tr id="torrent-{{ torrent.id }}">
+            <td>{{ torrent.title }}</td>
+            <td>{{ torrent.quality | default("—") }}</td>
+            <td>{% if torrent.size_bytes %}{{ (torrent.size_bytes / 1073741824) | round(1) }} GB{% else %}—{% endif %}</td>
+            <td>{{ torrent.seeders | default("—") }}</td>
+            <td>
+                {% if torrent.qbt_hash %}
+                <span>Downloading</span>
+                {% else %}
+                <button
+                    hx-post="/api/torrents/{{ torrent.id }}/download"
+                    hx-target="#torrent-{{ torrent.id }}"
+                    hx-swap="outerHTML"
+                    class="outline"
+                >Download</button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,36 @@
+# mview configuration
+
+[rutracker]
+url = "https://rutracker.org"
+username = "your_username"
+password = "your_password"
+
+[qbittorrent]
+url = "http://qbittorrent:8080"
+# Optional: omit if auth is disabled in qBittorrent for local networks
+username = "admin"
+password = "adminpass"
+
+[tmdb]
+api_key = "your_tmdb_api_key"
+
+# Optional: Plex integration
+[plex]
+url = "http://plex:32400"
+token = "your_plex_token"
+
+# Optional: Telegram notifications
+[telegram]
+bot_token = "123456:ABC-DEF"
+chat_id = 0
+
+[paths]
+download_dir = "/data/downloads"
+movies_dir = "/data/media/movies"
+tv_dir = "/data/media/tv"
+anime_dir = "/data/media/anime"
+
+# Optional: server settings (defaults shown)
+[server]
+host = "0.0.0.0"
+port = 3000

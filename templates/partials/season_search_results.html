@@ -1,0 +1,42 @@
+{% for error in errors %}
+<p style="color: var(--pico-del-color);">{{ error }}</p>
+{% endfor %}
+{% if results %}
+<div style="overflow-x:auto;">
+<table>
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Tags</th>
+            <th>Size</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in results %}
+        <tr>
+            <td><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a></td>
+            <td>
+                {% for tag in r.title | extract_tags %}
+                <span style="border:1px solid var(--pico-muted-border-color);padding:1px 6px;border-radius:4px;font-size:0.8em;margin:1px;white-space:nowrap;">{{ tag }}</span>
+                {% endfor %}
+            </td>
+            <td>{{ r.size }}</td>
+            <td>
+                <button
+                    hx-post="/media/seasons/{{ season_id }}/download"
+                    hx-vals='{"topic_id":"{{ r.topic_id }}","media_id":{{ media_id }},"size_bytes":{{ r.size_bytes }}}'
+                    hx-target="#season-{{ season_id }}"
+                    hx-swap="innerHTML"
+                    class="outline"
+                    style="padding:4px 12px;margin:0;"
+                >Download</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p>No results found.</p>
+{% endif %}

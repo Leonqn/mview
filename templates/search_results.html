@@ -1,0 +1,89 @@
+<div id="search-results">
+{% for error in errors %}
+<article style="background-color: var(--pico-del-color); color: var(--pico-color); padding: 0.75rem 1rem; margin-bottom: 1rem;">
+    {{ error }}
+</article>
+{% endfor %}
+{% if results %}
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+    <button class="outline" onclick="filterResults('all')" id="rf-all" style="margin:0;padding:4px 12px;">All</button>
+    <button class="outline secondary" onclick="filterResults('anilist')" id="rf-anilist" style="margin:0;padding:4px 12px;">AniList</button>
+    <button class="outline secondary" onclick="filterResults('tmdb')" id="rf-tmdb" style="margin:0;padding:4px 12px;">TMDB</button>
+</div>
+{% for item in results %}
+<article data-source="{{ item.source }}" style="display:flex;gap:0.75rem;align-items:flex-start;padding:0.75rem;">
+    {% if item.poster_url %}
+    <img src="{{ item.poster_url }}" alt="{{ item.title }}" style="width:120px;min-width:120px;border-radius:4px;">
+    {% endif %}
+    <div style="flex:1;min-width:0;">
+        <strong>{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</strong>
+        {% if item.original_title %}
+        <br><small><em>{{ item.original_title }}</em></small>
+        {% endif %}
+        <p style="margin:0.25rem 0;"><small>
+            {{ item.media_type | capitalize }}
+            {% if item.format %} ({{ item.format }}){% endif %}
+            {% if item.episodes %} &mdash; {{ item.episodes }} ep{% endif %}
+            &mdash;
+            {% if item.source == "anilist" %}
+            <a href="https://anilist.co/anime/{{ item.anilist_id }}" target="_blank" rel="noopener" style="font-weight:600;">AniList</a>
+            {% elif item.media_type == "movie" %}
+            <a href="https://www.themoviedb.org/movie/{{ item.tmdb_id }}" target="_blank" rel="noopener" style="font-weight:600;">TMDB</a>
+            {% else %}
+            <a href="https://www.themoviedb.org/tv/{{ item.tmdb_id }}" target="_blank" rel="noopener" style="font-weight:600;">TMDB</a>
+            {% endif %}
+        </small></p>
+        {% if item.overview %}
+        <details style="margin:0.25rem 0;">
+            <summary style="font-size:0.8em;padding:0;list-style:none;cursor:pointer;color:var(--pico-muted-color);">description</summary>
+            <p style="margin:0.25rem 0;"><small>{{ item.overview | truncate(300) }}</small></p>
+        </details>
+        {% endif %}
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.25rem;flex-wrap:wrap;">
+            {% if item.source == "anilist" %}
+            <button
+                hx-post="/api/media/track"
+                hx-vals='{"anilist_id":"{{ item.anilist_id }}","media_type":"anime"}'
+                hx-target="#ts-{{ item.source }}-{{ item.anilist_id }}"
+                hx-swap="innerHTML"
+                class="outline" style="width:auto;flex-shrink:0;padding:4px 12px;"
+            >Track as Anime</button>
+            <span id="ts-{{ item.source }}-{{ item.anilist_id }}"></span>
+            {% else %}
+            <button
+                hx-post="/api/media/track"
+                hx-vals='{"tmdb_id":"{{ item.tmdb_id }}","media_type":"{{ item.media_type }}"}'
+                hx-target="#ts-{{ item.source }}-{{ item.tmdb_id }}"
+                hx-swap="innerHTML"
+                class="outline" style="width:auto;flex-shrink:0;padding:4px 12px;"
+            >Track as {{ item.media_type | capitalize }}</button>
+            {% if item.media_type == "series" %}
+            <button
+                hx-post="/api/media/track"
+                hx-vals='{"tmdb_id":"{{ item.tmdb_id }}","media_type":"anime"}'
+                hx-target="#ts-{{ item.source }}-{{ item.tmdb_id }}"
+                hx-swap="innerHTML"
+                class="outline secondary" style="width:auto;flex-shrink:0;padding:4px 12px;"
+            >Track as Anime</button>
+            {% endif %}
+            <span id="ts-{{ item.source }}-{{ item.tmdb_id }}"></span>
+            {% endif %}
+        </div>
+    </div>
+</article>
+{% endfor %}
+<script>
+function filterResults(src) {
+    document.querySelectorAll('#search-results article[data-source]').forEach(el => {
+        el.style.display = (src === 'all' || el.dataset.source === src) ? 'flex' : 'none';
+    });
+    document.querySelectorAll('[id^="rf-"]').forEach(btn => {
+        btn.className = btn.id === 'rf-' + src ? 'outline' : 'outline secondary';
+    });
+}
+</script>
+{% endif %}
+{% if query and not results %}
+<p>No results found for "{{ query }}".</p>
+{% endif %}
+</div>

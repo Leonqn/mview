@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}Search - mview{% endblock %}
+
+{% block content %}
+<h2>Search</h2>
+<form id="search-form" hx-post="/search" hx-target="#search-results" hx-swap="innerHTML" hx-indicator="#search-spinner">
+    <div class="grid">
+        <input type="search" name="q" id="search-input" placeholder="Search for movies, series, or anime..." value="{{ query }}" autofocus>
+        <button type="submit">Search</button>
+    </div>
+</form>
+<div id="search-spinner" class="htmx-indicator" style="text-align:center;padding:1rem;">
+    Searching...
+</div>
+<div id="search-results"
+    {% if query %}
+    hx-post="/search"
+    hx-vals='{"q":"{{ query }}"}'
+    hx-trigger="load"
+    hx-indicator="#search-spinner"
+    {% endif %}
+></div>
+<script>
+document.getElementById('search-form').addEventListener('htmx:afterRequest', function() {
+    var q = document.getElementById('search-input').value;
+    if (q) {
+        history.replaceState(null, '', '/search?q=' + encodeURIComponent(q));
+    }
+});
+</script>
+{% endblock %}

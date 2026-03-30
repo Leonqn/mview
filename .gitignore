@@ -1,1 +1,7 @@
 /target
+config.toml
+data/
+mview.db*
+
+# ralphex progress logs
+.ralphex/progress/

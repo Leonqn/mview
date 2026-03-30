@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - mview{% endblock %}
+
+{% block content %}
+<h1>Settings</h1>
+<p><small>Configuration is read from config.toml. Restart the application after editing.</small></p>
+
+<article>
+    <header>RuTracker</header>
+    <div class="grid">
+        <label>URL <input type="text" value="{{ rutracker_url }}" readonly></label>
+        <label>Username <input type="text" value="{{ rutracker_username }}" readonly></label>
+    </div>
+</article>
+
+<article>
+    <header>qBittorrent</header>
+    <div class="grid">
+        <label>URL <input type="text" value="{{ qbittorrent_url }}" readonly></label>
+        <label>Username <input type="text" value="{{ qbittorrent_username }}" readonly></label>
+    </div>
+</article>
+
+<article>
+    <header>TMDB</header>
+    <label>API Key <input type="password" value="{{ tmdb_api_key }}" readonly></label>
+</article>
+
+<article>
+    <header>Plex</header>
+    <div class="grid">
+        <label>URL <input type="text" value="{{ plex_url }}" readonly></label>
+        <label>Token <input type="password" value="{{ plex_token }}" readonly></label>
+    </div>
+</article>
+
+<article>
+    <header>Telegram</header>
+    <div class="grid">
+        <label>Bot Token <input type="password" value="{{ telegram_bot_token }}" readonly></label>
+        <label>Chat ID <input type="text" value="{{ telegram_chat_id }}" readonly></label>
+    </div>
+</article>
+
+<article>
+    <header>Paths</header>
+    <label>Download Directory <input type="text" value="{{ download_dir }}" readonly></label>
+    <label>Movies Directory <input type="text" value="{{ movies_dir }}" readonly></label>
+    <label>TV Directory <input type="text" value="{{ tv_dir }}" readonly></label>
+</article>
+
+<article>
+    <header>Server</header>
+    <div class="grid">
+        <label>Host <input type="text" value="{{ server_host }}" readonly></label>
+        <label>Port <input type="text" value="{{ server_port }}" readonly></label>
+    </div>
+</article>
+{% endblock %}
