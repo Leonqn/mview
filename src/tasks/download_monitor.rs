@@ -257,7 +257,10 @@ async fn process_completed_torrent(
             queries::update_torrent_auto_update(&conn, torrent_id, false)
         })
         .await??;
-        info!(title = db_torrent.title, "auto-update disabled, no pending episodes");
+        info!(
+            title = db_torrent.title,
+            "auto-update disabled, no pending episodes"
+        );
     }
 
     // Create notification

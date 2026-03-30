@@ -41,29 +41,25 @@ async fn media_detail(
     Path(id): Path<i64>,
 ) -> Result<Html<String>, AppError> {
     let pool = state.db.clone();
-    let (media, db_seasons, torrents, all_episodes) =
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get()?;
-            let media = queries::get_media(&conn, id)?
-                .ok_or_else(|| anyhow::anyhow!("Media not found"))?;
-            let media_id = media.id;
-            let seasons = queries::get_seasons_for_media(&conn, media_id)?;
-            let torrents = queries::get_torrents_for_media(&conn, media_id)?;
-            let mut all_episodes = Vec::new();
-            for s in &seasons {
-                let eps = queries::get_episodes_for_season(&conn, s.id)?;
-                all_episodes.push(eps);
-            }
-            Ok::<_, anyhow::Error>((media, seasons, torrents, all_episodes))
-        })
-        .await??;
+    let (media, db_seasons, torrents, all_episodes) = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        let media =
+            queries::get_media(&conn, id)?.ok_or_else(|| anyhow::anyhow!("Media not found"))?;
+        let media_id = media.id;
+        let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+        let torrents = queries::get_torrents_for_media(&conn, media_id)?;
+        let mut all_episodes = Vec::new();
+        for s in &seasons {
+            let eps = queries::get_episodes_for_season(&conn, s.id)?;
+            all_episodes.push(eps);
+        }
+        Ok::<_, anyhow::Error>((media, seasons, torrents, all_episodes))
+    })
+    .await??;
 
     // Fetch download progress from qBittorrent for active torrents
     let qbt_progress: std::collections::HashMap<String, f64> = {
-        let hashes: Vec<String> = torrents
-            .iter()
-            .filter_map(|t| t.qbt_hash.clone())
-            .collect();
+        let hashes: Vec<String> = torrents.iter().filter_map(|t| t.qbt_hash.clone()).collect();
         if hashes.is_empty() {
             std::collections::HashMap::new()
         } else {
@@ -120,8 +116,7 @@ async fn media_detail(
         "viewing media detail"
     );
 
-    let plex_configured =
-        !state.config.plex.url.is_empty() && !state.config.plex.token.is_empty();
+    let plex_configured = !state.config.plex.url.is_empty() && !state.config.plex.token.is_empty();
 
     let tmpl = state.templates.get_template("series.html")?;
     let html = tmpl.render(minijinja::context! {
@@ -265,14 +260,17 @@ async fn download_search_result(
         rutracker_topic_id: form.topic_id.clone(),
         title: topic_info.title,
         quality: topic_info.quality,
-        size_bytes: form.size_bytes.filter(|&s| s > 0).or(Some(topic_info.size_bytes)),
+        size_bytes: form
+            .size_bytes
+            .filter(|&s| s > 0)
+            .or(Some(topic_info.size_bytes)),
         seeders: Some(topic_info.seeders as i64),
         season_number: Some(season.season_number),
         episode_info: None,
         registered_at: topic_info.registered_at,
         last_checked_at: None,
         torrent_hash: topic_info.torrent_hash,
-        qbt_hash: qbt_hash,
+        qbt_hash,
         status: "active".to_string(),
         auto_update: true,
         created_at: String::new(),

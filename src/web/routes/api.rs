@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use chrono::Local;
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::routing::{get, post};
 use axum::{Form, Router};
+use chrono::Local;
 use serde::Deserialize;
 use tracing::{error, info};
 
@@ -21,7 +21,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/media/{id}/add-torrent", post(add_torrent_to_media))
         .route("/api/torrents/{id}/download", post(download_torrent))
         .route("/api/torrents/{id}/progress", get(torrent_progress))
-        .route("/api/seasons/{id}/progress-badge", get(season_progress_badge))
+        .route(
+            "/api/seasons/{id}/progress-badge",
+            get(season_progress_badge),
+        )
         .route("/api/torrents/{id}/update", post(check_torrent_update))
         .route("/api/notifications", get(get_notifications))
         .route("/api/notifications/{id}/read", post(mark_notification_read))
@@ -379,7 +382,8 @@ async fn track_series_with_type(
 
         let today = Local::now().format("%Y-%m-%d").to_string();
         for s in &real_seasons {
-            let episodes: Vec<Episode> = match state.tmdb.get_season(tmdb_id, s.season_number).await {
+            let episodes: Vec<Episode> = match state.tmdb.get_season(tmdb_id, s.season_number).await
+            {
                 Ok(season_details) => season_details
                     .episodes
                     .unwrap_or_default()
@@ -897,9 +901,7 @@ async fn torrent_progress(
     };
 
     let html = match progress {
-        Some(p) if p >= 100.0 => {
-            "<span style=\"color:green;\">Completed</span>".to_string()
-        }
+        Some(p) if p >= 100.0 => "<span style=\"color:green;\">Completed</span>".to_string(),
         Some(p) => {
             format!("<span style=\"color:orange;\">Downloading {p}%</span>")
         }
@@ -1150,9 +1152,7 @@ async fn plex_scan_media(
     .ok_or_else(|| anyhow::anyhow!("media not found"))?;
 
     let dir = match media.media_type.as_str() {
-        "anime" if !state.config.paths.anime_dir.is_empty() => {
-            state.config.paths.anime_dir.clone()
-        }
+        "anime" if !state.config.paths.anime_dir.is_empty() => state.config.paths.anime_dir.clone(),
         "movie" => state.config.paths.movies_dir.clone(),
         _ => state.config.paths.tv_dir.clone(),
     };

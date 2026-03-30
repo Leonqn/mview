@@ -60,7 +60,10 @@ pub async fn check_new_seasons(state: &Arc<AppState>) -> Result<()> {
     }
 
     if !series.is_empty() {
-        info!(count = series.len(), "checking tracked series on tmdb for new seasons");
+        info!(
+            count = series.len(),
+            "checking tracked series on tmdb for new seasons"
+        );
         for media in &series {
             if let Err(error) = check_single_series(state, media).await {
                 error!(
@@ -74,7 +77,10 @@ pub async fn check_new_seasons(state: &Arc<AppState>) -> Result<()> {
     }
 
     if !collections.is_empty() {
-        info!(count = collections.len(), "checking tracked movies on tmdb for new collection parts");
+        info!(
+            count = collections.len(),
+            "checking tracked movies on tmdb for new collection parts"
+        );
         for media in &collections {
             if let Err(error) = check_single_collection(state, media).await {
                 error!(
@@ -108,14 +114,15 @@ async fn check_single_collection(
 
     // Standalone movies have exactly one season — nothing to monitor for new parts
     if db_seasons.len() <= 1 {
-        debug!(title = media.title, "single-film entry, skipping collection check");
+        debug!(
+            title = media.title,
+            "single-film entry, skipping collection check"
+        );
         return Ok(());
     }
 
-    let existing_titles: std::collections::HashSet<String> = db_seasons
-        .iter()
-        .filter_map(|s| s.title.clone())
-        .collect();
+    let existing_titles: std::collections::HashSet<String> =
+        db_seasons.iter().filter_map(|s| s.title.clone()).collect();
 
     let collection = state.tmdb.get_collection(tmdb_id).await?;
 
@@ -137,7 +144,12 @@ async fn check_single_collection(
         "found new collection part(s) on tmdb"
     );
 
-    let next_season_number = db_seasons.iter().map(|s| s.season_number).max().unwrap_or(0) + 1;
+    let next_season_number = db_seasons
+        .iter()
+        .map(|s| s.season_number)
+        .max()
+        .unwrap_or(0)
+        + 1;
 
     for (idx, part) in new_parts.iter().enumerate() {
         let season_number = next_season_number + idx as i64;

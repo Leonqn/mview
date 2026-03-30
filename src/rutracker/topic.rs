@@ -185,21 +185,27 @@ fn extract_range_from(text: &str) -> Option<String> {
             let lower = text.to_lowercase();
             if lower.contains(" из ") {
                 let parts: Vec<&str> = lower.split(" из ").collect();
-                if parts.len() == 2 {
-                    if let (Some(start), Some(total)) = (
-                        parts[0].split_whitespace().last().and_then(|s| s.parse::<i32>().ok()),
-                        parts[1].split_whitespace().next().and_then(|s| s.parse::<i32>().ok()),
-                    ) {
-                        return Some(format!("1-{start} из {total}"));
-                    }
+                if parts.len() == 2
+                    && let (Some(start), Some(total)) = (
+                        parts[0]
+                            .split_whitespace()
+                            .last()
+                            .and_then(|s| s.parse::<i32>().ok()),
+                        parts[1]
+                            .split_whitespace()
+                            .next()
+                            .and_then(|s| s.parse::<i32>().ok()),
+                    )
+                {
+                    return Some(format!("1-{start} из {total}"));
                 }
             }
             nums.clear();
         }
     }
 
-    if found_dash && nums.contains(|c: char| c == '-' || c == '+') {
-        let parts: Vec<&str> = nums.split(|c: char| c == '-' || c == '+').collect();
+    if found_dash && nums.contains(['-', '+']) {
+        let parts: Vec<&str> = nums.split(['-', '+']).collect();
         if parts.len() == 2 && parts[0].parse::<i32>().is_ok() && parts[1].parse::<i32>().is_ok() {
             return Some(nums);
         }
@@ -310,17 +316,17 @@ fn extract_torrent_hash(document: &Html) -> Option<String> {
             }
         }
         // Fallback: extract from href magnet URI (btih:HASH)
-        if let Some(href) = el.value().attr("href") {
-            if let Some(start) = href.find("btih:") {
-                let hash_start = start + 5;
-                let hash_end = href[hash_start..]
-                    .find('&')
-                    .map(|i| hash_start + i)
-                    .unwrap_or(href.len());
-                let hash = &href[hash_start..hash_end];
-                if !hash.is_empty() {
-                    return Some(hash.to_lowercase());
-                }
+        if let Some(href) = el.value().attr("href")
+            && let Some(start) = href.find("btih:")
+        {
+            let hash_start = start + 5;
+            let hash_end = href[hash_start..]
+                .find('&')
+                .map(|i| hash_start + i)
+                .unwrap_or(href.len());
+            let hash = &href[hash_start..hash_end];
+            if !hash.is_empty() {
+                return Some(hash.to_lowercase());
             }
         }
     }
