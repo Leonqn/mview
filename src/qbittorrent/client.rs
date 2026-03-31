@@ -157,10 +157,11 @@ impl QbtClient {
             .context("Failed to read add_torrent response")?;
 
         if body.contains("Fails") {
-            anyhow::bail!("qBittorrent rejected torrent: {}", body)
+            // "Fails." means the torrent is already added — not a real error
+            debug!(filename, "torrent already exists in qbittorrent");
+        } else {
+            info!(filename, "torrent added to qbittorrent");
         }
-
-        info!(filename, "torrent added to qbittorrent");
 
         Ok(())
     }

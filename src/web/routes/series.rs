@@ -238,6 +238,21 @@ async fn download_search_result(
     .await??
     .ok_or_else(|| anyhow::anyhow!("season not found"))?;
 
+    // Check if torrent already exists in DB for this media
+    let pool = state.db.clone();
+    let existing_topic_id = form.topic_id.clone();
+    let existing_media_id = form.media_id;
+    let existing_torrent = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        let torrents = queries::get_torrents_for_media(&conn, existing_media_id)?;
+        Ok::<_, anyhow::Error>(
+            torrents
+                .into_iter()
+                .find(|t| t.rutracker_topic_id == existing_topic_id),
+        )
+    })
+    .await??;
+
     // Parse topic info from RuTracker
     let topic_info = state.rutracker.parse_topic(&form.topic_id).await?;
 
@@ -256,36 +271,51 @@ async fn download_search_result(
     // Use torrent_hash from rutracker magnet link as qbt_hash
     let qbt_hash = topic_info.torrent_hash.clone();
 
-    // Both external operations succeeded — now persist to DB
-    let torrent = crate::db::models::Torrent {
-        id: 0,
-        media_id: form.media_id,
-        rutracker_topic_id: form.topic_id.clone(),
-        title: topic_info.title,
-        quality: topic_info.quality,
-        size_bytes: form
-            .size_bytes
-            .filter(|&s| s > 0)
-            .or(Some(topic_info.size_bytes)),
-        seeders: Some(topic_info.seeders as i64),
-        season_number: Some(season.season_number),
-        episode_info: None,
-        registered_at: topic_info.registered_at,
-        last_checked_at: None,
-        torrent_hash: topic_info.torrent_hash,
-        qbt_hash,
-        status: "active".to_string(),
-        auto_update: true,
-        created_at: String::new(),
-        updated_at: String::new(),
-    };
+    let torrent_id = if let Some(existing) = existing_torrent {
+        // Torrent already in DB — just update qbt_hash
+        let tid = existing.id;
+        if let Some(ref hash) = qbt_hash {
+            let hash = hash.clone();
+            let pool = state.db.clone();
+            tokio::task::spawn_blocking(move || {
+                let conn = pool.get()?;
+                queries::update_torrent_qbt_hash(&conn, tid, &hash)
+            })
+            .await??;
+        }
+        tid
+    } else {
+        // Insert new torrent
+        let torrent = crate::db::models::Torrent {
+            id: 0,
+            media_id: form.media_id,
+            rutracker_topic_id: form.topic_id.clone(),
+            title: topic_info.title,
+            quality: topic_info.quality,
+            size_bytes: form
+                .size_bytes
+                .filter(|&s| s > 0)
+                .or(Some(topic_info.size_bytes)),
+            seeders: Some(topic_info.seeders as i64),
+            season_number: Some(season.season_number),
+            episode_info: None,
+            registered_at: topic_info.registered_at,
+            last_checked_at: None,
+            torrent_hash: topic_info.torrent_hash,
+            qbt_hash,
+            status: "active".to_string(),
+            auto_update: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
 
-    let pool = state.db.clone();
-    let torrent_id = tokio::task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        queries::insert_torrent(&conn, &torrent)
-    })
-    .await??;
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            queries::insert_torrent(&conn, &torrent)
+        })
+        .await??
+    };
 
     info!(
         topic_id = form.topic_id,
