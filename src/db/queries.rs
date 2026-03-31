@@ -484,6 +484,12 @@ pub fn update_torrent_status(conn: &Connection, id: i64, status: &str) -> Result
     Ok(())
 }
 
+pub fn delete_torrent(conn: &Connection, id: i64) -> Result<()> {
+    conn.execute("DELETE FROM torrents WHERE id = ?1", params![id])
+        .with_context(|| "Failed to delete torrent")?;
+    Ok(())
+}
+
 pub fn get_active_torrents_with_qbt_hash(conn: &Connection) -> Result<Vec<Torrent>> {
     let mut stmt = conn
         .prepare(

@@ -166,6 +166,27 @@ impl QbtClient {
         Ok(())
     }
 
+    /// Delete a torrent from qBittorrent by hash, optionally deleting downloaded files.
+    pub async fn delete_torrent(&mut self, hash: &str, delete_files: bool) -> Result<()> {
+        let url = format!(
+            "{}/api/v2/torrents/delete?hashes={}&deleteFiles={}",
+            self.base_url,
+            urlencoding::encode(hash),
+            delete_files
+        );
+
+        let resp = self.api_get(&url).await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("qbittorrent delete_torrent failed: {} {}", status, body);
+        }
+
+        info!(hash, delete_files, "torrent deleted from qbittorrent");
+        Ok(())
+    }
+
     /// Send an API request, retrying once with re-login if the session has expired (403).
     async fn api_get(&mut self, url: &str) -> Result<reqwest::Response> {
         let resp = self

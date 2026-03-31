@@ -20,6 +20,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/media/{id}/delete", post(delete_media))
         .route("/api/media/{id}/add-torrent", post(add_torrent_to_media))
         .route("/api/torrents/{id}/download", post(download_torrent))
+        .route("/api/torrents/{id}/delete", post(delete_torrent_endpoint))
         .route("/api/torrents/{id}/progress", get(torrent_progress))
         .route(
             "/api/seasons/{id}/progress-badge",
@@ -875,6 +876,39 @@ async fn download_torrent(
         }
     })?;
     Ok(Html(html))
+}
+
+async fn delete_torrent_endpoint(
+    State(state): State<Arc<AppState>>,
+    Path(torrent_id): Path<i64>,
+) -> Result<Html<String>, AppError> {
+    let pool = state.db.clone();
+    let torrent = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        queries::get_torrent(&conn, torrent_id)
+    })
+    .await??
+    .ok_or_else(|| anyhow::anyhow!("torrent not found"))?;
+
+    // Delete from qBittorrent (with files) if it has a hash
+    if let Some(ref hash) = torrent.qbt_hash {
+        let mut qbt = state.qbittorrent.lock().await;
+        if let Err(e) = qbt.delete_torrent(hash, true).await {
+            error!(torrent_id, error = %e, "failed to delete torrent from qbittorrent");
+        }
+    }
+
+    // Delete from DB
+    let pool = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        queries::delete_torrent(&conn, torrent_id)
+    })
+    .await??;
+
+    info!(torrent_id, title = torrent.title, "torrent deleted");
+
+    Ok(Html(String::new()))
 }
 
 async fn torrent_progress(

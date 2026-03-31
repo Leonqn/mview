@@ -86,8 +86,24 @@
                         {% else %}
                         <span style="color:orange;">{{ entry.torrent_progress[torrent.qbt_hash] }}%</span>
                         {% endif %}
+                        <button
+                            hx-post="/api/torrents/{{ torrent.id }}/delete"
+                            hx-target="#torrent-{{ torrent.id }}"
+                            hx-swap="outerHTML"
+                            hx-confirm="Delete torrent and all downloaded files?"
+                            class="outline secondary"
+                            style="margin:0;padding:1px 8px;font-size:0.8em;"
+                        >Delete</button>
                     {% elif torrent.qbt_hash %}
                     <span style="color:orange;">Downloading</span>
+                    <button
+                        hx-post="/api/torrents/{{ torrent.id }}/delete"
+                        hx-target="#torrent-{{ torrent.id }}"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete torrent and all downloaded files?"
+                        class="outline secondary"
+                        style="margin:0;padding:1px 8px;font-size:0.8em;"
+                    >Delete</button>
                     {% else %}
                     <span style="opacity:0.5;">—</span>
                     {% endif %}
