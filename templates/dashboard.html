@@ -32,7 +32,7 @@
                 style="margin:0;padding:1px 6px;font-size:0.75em;white-space:nowrap;flex-shrink:0;"
             >Remove</button>
         </div>
-        <small>{{ item.media_type | capitalize }}{% if item.tracking_seasons %} &mdash; {% for s in item.tracking_seasons %}S{{ s.season_number }}: {{ s.downloaded }}/{{ s.total }}{% if s.downloading %} ↓{% endif %}{% if s.pending %} <strong style="color:var(--pico-primary);">pending</strong>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</small>
+        <small>{{ item.media_type | capitalize }}{% if item.tracking_seasons %} &mdash; {% for s in item.tracking_seasons %}{% if s.title %}{{ s.title }}{% else %}S{{ s.season_number }}{% endif %}: {{ s.downloaded }}/{{ s.total }}{% if s.downloading %} ↓{% endif %}{% if s.pending %} <strong style="color:var(--pico-primary);">pending</strong>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</small>
         {% if item.overview %}
         <p style="margin:0.15rem 0 0;cursor:pointer;font-size:0.85em;color:var(--pico-muted-color);"
            onclick="var t=this;t.textContent=t.dataset.full||t.textContent;t.style.color='';t.style.cursor=''"

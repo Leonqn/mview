@@ -19,6 +19,7 @@ pub fn routes() -> Router<Arc<AppState>> {
 #[derive(Debug, Serialize)]
 struct SeasonDashboardInfo {
     season_number: i64,
+    title: Option<String>,
     downloaded: usize,
     total: usize,
     downloading: bool,
@@ -40,46 +41,43 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
         let media_list = queries::get_all_media(&conn)?;
         let mut items = Vec::new();
         for media in media_list {
-            let (tracking_seasons, has_pending) =
-                if media.media_type == "series" || media.media_type == "anime" {
-                    let today = Local::now().format("%Y-%m-%d").to_string();
-                    let seasons = queries::get_tracking_seasons_for_media(&conn, media.id)?;
-                    let torrents = queries::get_torrents_for_media(&conn, media.id)?;
-                    let mut season_infos = Vec::new();
-                    let mut any_pending = false;
-                    for s in &seasons {
-                        let episodes =
-                            queries::get_episodes_for_season(&conn, s.id).unwrap_or_default();
-                        let aired: Vec<_> = episodes
-                            .iter()
-                            .filter(|e| {
-                                e.air_date
-                                    .as_deref()
-                                    .map(|d| d <= today.as_str())
-                                    .unwrap_or(false)
-                            })
-                            .collect();
-                        let downloaded = aired.iter().filter(|e| e.downloaded).count();
-                        let total = aired.len();
-                        let downloading = torrents.iter().any(|t| {
-                            t.status == "active" && t.season_number == Some(s.season_number)
-                        });
-                        let pending = downloaded < total;
-                        if pending {
-                            any_pending = true;
-                        }
-                        season_infos.push(SeasonDashboardInfo {
-                            season_number: s.season_number,
-                            downloaded,
-                            total,
-                            downloading,
-                            pending,
-                        });
-                    }
-                    (season_infos, any_pending)
-                } else {
-                    (Vec::<SeasonDashboardInfo>::new(), false)
-                };
+            let today = Local::now().format("%Y-%m-%d").to_string();
+            let seasons = queries::get_tracking_seasons_for_media(&conn, media.id)?;
+            let torrents = queries::get_torrents_for_media(&conn, media.id)?;
+            let mut season_infos = Vec::new();
+            let mut any_pending = false;
+            for s in &seasons {
+                let episodes = queries::get_episodes_for_season(&conn, s.id).unwrap_or_default();
+                let aired: Vec<_> = episodes
+                    .iter()
+                    .filter(|e| {
+                        e.air_date
+                            .as_deref()
+                            .map(|d| d <= today.as_str())
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                let downloaded = aired.iter().filter(|e| e.downloaded).count();
+                let total = aired.len();
+                let downloading = torrents.iter().any(|t| {
+                    t.status == "active"
+                        && t.season_number == Some(s.season_number)
+                        && t.qbt_hash.is_some()
+                });
+                let pending = downloaded < total;
+                if pending {
+                    any_pending = true;
+                }
+                season_infos.push(SeasonDashboardInfo {
+                    season_number: s.season_number,
+                    title: s.title.clone(),
+                    downloaded,
+                    total,
+                    downloading,
+                    pending,
+                });
+            }
+            let (tracking_seasons, has_pending) = (season_infos, any_pending);
             items.push(MediaDashboardItem {
                 media,
                 tracking_seasons,

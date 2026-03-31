@@ -17,9 +17,11 @@
         <tr>
             <td><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a></td>
             <td>
+                <div style="display:flex;flex-wrap:wrap;gap:2px;">
                 {% for tag in r.title | extract_tags %}
-                <span style="border:1px solid var(--pico-muted-border-color);padding:1px 6px;border-radius:4px;font-size:0.8em;margin:1px;white-space:nowrap;">{{ tag }}</span>
+                <span style="border:1px solid var(--pico-muted-border-color);padding:1px 6px;border-radius:4px;font-size:0.75em;white-space:nowrap;">{{ tag }}</span>
                 {% endfor %}
+                </div>
             </td>
             <td>{{ r.size }}</td>
             <td>

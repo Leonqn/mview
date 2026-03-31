@@ -1,32 +1,28 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::response::{Html, IntoResponse, Redirect};
+use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::{Form, Router};
 use chrono::Local;
 use serde::Deserialize;
 use tracing::{error, info};
 
-use crate::db::models::{Episode, Media, Notification, Season};
+use crate::db::models::{Episode, Media, Season};
 use crate::db::queries;
 use crate::error::AppError;
-use crate::rutracker::monitor;
 use crate::web::AppState;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/media/track", post(track_media))
         .route("/api/media/{id}/delete", post(delete_media))
-        .route("/api/media/{id}/add-torrent", post(add_torrent_to_media))
-        .route("/api/torrents/{id}/download", post(download_torrent))
         .route("/api/torrents/{id}/delete", post(delete_torrent_endpoint))
         .route("/api/torrents/{id}/progress", get(torrent_progress))
         .route(
             "/api/seasons/{id}/progress-badge",
             get(season_progress_badge),
         )
-        .route("/api/torrents/{id}/update", post(check_torrent_update))
         .route("/api/notifications", get(get_notifications))
         .route("/api/notifications/{id}/read", post(mark_notification_read))
         .route("/api/media/{id}/plex-scan", post(plex_scan_media))
@@ -149,6 +145,7 @@ async fn track_movie(state: &AppState, tmdb_id: i64) -> anyhow::Result<i64> {
     }
 
     // Standalone movie — single season stub
+    let movie_title = details.title.clone();
     let year = details
         .release_date
         .as_ref()
@@ -189,10 +186,10 @@ async fn track_movie(state: &AppState, tmdb_id: i64) -> anyhow::Result<i64> {
                 id: 0,
                 media_id,
                 season_number: 1,
-                title: None,
+                title: Some(movie_title),
                 episode_count: Some(1),
                 anilist_id: None,
-                format: None,
+                format: Some("MOVIE".to_string()),
                 status: "tracking".to_string(),
                 created_at: String::new(),
             },
@@ -464,95 +461,6 @@ async fn track_series_with_type(
     Ok(media_id)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AddTorrentForm {
-    pub topic_id: String,
-    pub auto_update: Option<String>,
-}
-
-/// Add a RuTracker torrent to an existing tracked media item.
-async fn add_torrent_to_media(
-    State(state): State<Arc<AppState>>,
-    Path(media_id): Path<i64>,
-    Form(form): Form<AddTorrentForm>,
-) -> Result<Redirect, AppError> {
-    // Validate topic_id is numeric
-    if form.topic_id.is_empty() || !form.topic_id.chars().all(|c| c.is_ascii_digit()) {
-        return Err(anyhow::anyhow!("Invalid topic_id: must be a numeric value").into());
-    }
-
-    // Verify media exists
-    let pool = state.db.clone();
-    let mid = media_id;
-    let media = tokio::task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        queries::get_media(&conn, mid)
-    })
-    .await??
-    .ok_or_else(|| anyhow::anyhow!("Media {} not found", media_id))?;
-
-    // Fetch topic info from RuTracker
-    let topic_info = state.rutracker.parse_topic(&form.topic_id).await?;
-
-    let auto_update = form.auto_update.as_deref() == Some("on");
-
-    // Extract season number from topic info for series
-    let season_number = if media.media_type == "series" {
-        extract_season_number(&topic_info.title)
-    } else {
-        None
-    };
-
-    let torrent = crate::db::models::Torrent {
-        id: 0,
-        media_id,
-        rutracker_topic_id: form.topic_id.clone(),
-        title: topic_info.title,
-        quality: topic_info.quality,
-        size_bytes: Some(topic_info.size_bytes),
-        seeders: Some(topic_info.seeders as i64),
-        season_number,
-        episode_info: None,
-        registered_at: topic_info.registered_at,
-        last_checked_at: None,
-        torrent_hash: topic_info.torrent_hash,
-        qbt_hash: None,
-        status: "active".to_string(),
-        auto_update,
-        created_at: String::new(),
-        updated_at: String::new(),
-    };
-
-    let topic_id_for_log = form.topic_id.clone();
-    let pool = state.db.clone();
-    let insert_result = tokio::task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        queries::insert_torrent(&conn, &torrent)
-    })
-    .await?;
-
-    match insert_result {
-        Ok(_) => {
-            info!(
-                topic_id = topic_id_for_log,
-                media_id,
-                title = media.title,
-                "added torrent to media"
-            );
-        }
-        Err(e) if e.to_string().contains("UNIQUE constraint failed") => {
-            info!(
-                topic_id = topic_id_for_log,
-                media_id, "torrent already exists for media, redirecting"
-            );
-        }
-        Err(e) => return Err(e.into()),
-    }
-
-    let redirect_path = format!("/media/{}", media_id);
-    Ok(Redirect::to(&redirect_path))
-}
-
 fn build_anime_season_data(
     chain: &[crate::anilist::models::AniListMedia],
 ) -> Vec<(Season, Vec<Episode>)> {
@@ -774,110 +682,6 @@ async fn track_anime(state: &AppState, anilist_id: i64) -> anyhow::Result<i64> {
     Ok(media_id)
 }
 
-/// Extract season number from a torrent title (e.g., "S01" or "Season 1").
-fn extract_season_number(title: &str) -> Option<i64> {
-    // Try S01 pattern - search case-insensitively by scanning all positions
-    let upper = title.to_uppercase();
-    let bytes = upper.as_bytes();
-    for i in 0..bytes.len() {
-        if bytes[i] == b'S'
-            && i + 1 < bytes.len()
-            && bytes[i + 1].is_ascii_digit()
-            && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
-        {
-            let after = &upper[i + 1..];
-            if let Some(num_str) = after.split(|c: char| !c.is_ascii_digit()).next()
-                && let Ok(n) = num_str.parse::<i64>()
-                && n > 0
-                && n < 100
-            {
-                return Some(n);
-            }
-        }
-    }
-    // Try "Сезон N" (Russian) and "Season N"
-    for pattern in &["Сезон ", "Season "] {
-        if let Some(pos) = title.find(pattern) {
-            let after = &title[pos + pattern.len()..];
-            if let Some(num_str) = after.split(|c: char| !c.is_ascii_digit()).next()
-                && let Ok(n) = num_str.parse::<i64>()
-                && n > 0
-                && n < 100
-            {
-                return Some(n);
-            }
-        }
-    }
-    None
-}
-
-async fn download_torrent(
-    State(state): State<Arc<AppState>>,
-    Path(torrent_id): Path<i64>,
-) -> Result<Html<String>, AppError> {
-    // Get torrent record from DB
-    let pool = state.db.clone();
-    let torrent = tokio::task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        queries::get_torrent(&conn, torrent_id)
-    })
-    .await??
-    .ok_or_else(|| anyhow::anyhow!("Torrent {} not found", torrent_id))?;
-
-    let topic_id = torrent.rutracker_topic_id.clone();
-
-    // Download .torrent file from RuTracker
-    let torrent_bytes = state.rutracker.download_torrent(&topic_id).await?;
-
-    let filename = format!("{}.torrent", topic_id);
-    let save_path = state.config.paths.download_dir.clone();
-
-    // Send to qBittorrent
-    {
-        let mut qbt = state.qbittorrent.lock().await;
-        qbt.ensure_logged_in().await?;
-        qbt.add_torrent(&torrent_bytes, &filename, &save_path, "mview")
-            .await?;
-    }
-
-    // Use torrent_hash from rutracker magnet link as qbt_hash
-    let qbt_hash = torrent.torrent_hash.clone();
-
-    info!(
-        torrent_id,
-        topic_id = topic_id,
-        qbt_hash = ?qbt_hash,
-        "torrent sent to qbittorrent"
-    );
-
-    // Update torrent status and qbt_hash in DB
-    let pool = state.db.clone();
-    let tid = torrent.id;
-    tokio::task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        queries::update_torrent_checked(&conn, tid)?;
-        if let Some(ref hash) = qbt_hash {
-            queries::update_torrent_qbt_hash(&conn, tid, hash)?;
-        }
-        Ok::<(), anyhow::Error>(())
-    })
-    .await??;
-
-    // Return updated torrent row partial
-    let tmpl = state.templates.get_template("partials/torrent_row.html")?;
-    let html = tmpl.render(minijinja::context! {
-        torrent => {
-            let pool = state.db.clone();
-            tokio::task::spawn_blocking(move || {
-                let conn = pool.get()?;
-                queries::get_torrent(&conn, torrent_id)
-            })
-            .await??.unwrap()
-        }
-    })?;
-    Ok(Html(html))
-}
-
 async fn delete_torrent_endpoint(
     State(state): State<Arc<AppState>>,
     Path(torrent_id): Path<i64>,
@@ -1009,131 +813,6 @@ async fn season_progress_badge(
     Ok(Html(html))
 }
 
-/// Manual update check: fetch topic info from RuTracker and compare registered_at.
-/// If updated, re-download and re-add to qBittorrent.
-async fn check_torrent_update(
-    State(state): State<Arc<AppState>>,
-    Path(torrent_id): Path<i64>,
-) -> Result<Html<String>, AppError> {
-    // Get torrent from DB
-    let pool = state.db.clone();
-    let torrent = tokio::task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        queries::get_torrent(&conn, torrent_id)
-    })
-    .await??
-    .ok_or_else(|| anyhow::anyhow!("Torrent {} not found", torrent_id))?;
-
-    let topic_id = torrent.rutracker_topic_id.clone();
-
-    // Fetch current topic info from RuTracker
-    let topic_info = state.rutracker.parse_topic(&topic_id).await?;
-
-    // Compare torrent hash / registered_at
-    let result = monitor::check_update(
-        &torrent,
-        topic_info.registered_at.as_deref(),
-        topic_info.torrent_hash.as_deref(),
-    );
-
-    // Update last_checked_at
-    let pool = state.db.clone();
-    let tid = torrent.id;
-    tokio::task::spawn_blocking(move || {
-        let conn = pool.get()?;
-        queries::update_torrent_checked(&conn, tid)
-    })
-    .await??;
-
-    if !result.has_update {
-        // No download needed — safe to persist new metadata now
-        if let Some(ref new_date) = result.new_registered_at {
-            let tid = torrent.id;
-            let new_date = new_date.clone();
-            let pool = state.db.clone();
-            tokio::task::spawn_blocking(move || {
-                let conn = pool.get()?;
-                queries::update_torrent_registered_at(&conn, tid, &new_date)
-            })
-            .await??;
-        }
-    }
-
-    if result.has_update {
-        info!(
-            title = torrent.title,
-            "manual update check: torrent has update, re-downloading"
-        );
-
-        // Download updated .torrent and re-add to qBittorrent
-        let torrent_bytes = state.rutracker.download_torrent(&topic_id).await?;
-
-        let filename = format!("{}.torrent", topic_id);
-        let save_path = state.config.paths.download_dir.clone();
-
-        {
-            let mut qbt = state.qbittorrent.lock().await;
-            qbt.ensure_logged_in().await?;
-            qbt.add_torrent(&torrent_bytes, &filename, &save_path, "mview")
-                .await?;
-        }
-
-        // Use torrent_hash from rutracker as qbt_hash
-        let new_hash = topic_info.torrent_hash.clone();
-
-        // Download succeeded — persist new metadata and qbt hash together
-        let tid = torrent.id;
-        let new_registered_at = result.new_registered_at.clone();
-        let new_hash_clone = new_hash.clone();
-        let pool = state.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get()?;
-            if let Some(ref date) = new_registered_at {
-                queries::update_torrent_registered_at(&conn, tid, date)?;
-            }
-            if let Some(ref hash) = new_hash_clone {
-                queries::update_torrent_qbt_hash(&conn, tid, hash)?;
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .await??;
-
-        // Create notification
-        let media_id = torrent.media_id;
-        let notification_msg = format!("Torrent updated (manual): {}", torrent.title);
-        let pool = state.db.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = pool.get()?;
-            queries::insert_notification(
-                &conn,
-                &Notification {
-                    id: 0,
-                    media_id: Some(media_id),
-                    message: notification_msg,
-                    notification_type: "torrent_update".to_string(),
-                    read: false,
-                    created_at: String::new(),
-                },
-            )
-        })
-        .await??;
-    }
-
-    // Return updated torrent row partial
-    let tmpl = state.templates.get_template("partials/torrent_row.html")?;
-    let html = tmpl.render(minijinja::context! {
-        torrent => {
-            let pool = state.db.clone();
-            tokio::task::spawn_blocking(move || {
-                let conn = pool.get()?;
-                queries::get_torrent(&conn, torrent_id)
-            })
-            .await??.unwrap()
-        }
-    })?;
-    Ok(Html(html))
-}
-
 async fn delete_media(
     State(state): State<Arc<AppState>>,
     Path(media_id): Path<i64>,
@@ -1226,7 +905,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::db;
-    use crate::db::models::{Media, Torrent};
+    use crate::db::models::Media;
     use crate::web;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -1472,98 +1151,6 @@ anime_dir = "/tmp/anime"
     }
 
     #[tokio::test]
-    async fn test_download_torrent_endpoint_exists() {
-        let state = build_test_state();
-
-        // Insert a media and torrent to get a valid torrent ID
-        let pool = state.db.clone();
-        let torrent_id = tokio::task::spawn_blocking(move || {
-            let conn = pool.get()?;
-            let media_id = queries::insert_media(
-                &conn,
-                &Media {
-                    id: 0,
-                    media_type: "movie".to_string(),
-                    title: "Test".to_string(),
-                    title_original: None,
-                    year: None,
-                    tmdb_id: None,
-                    imdb_id: None,
-                    kinopoisk_url: None,
-                    world_art_url: None,
-                    poster_url: None,
-                    overview: None,
-                    anilist_id: None,
-                    status: "tracking".to_string(),
-                    created_at: String::new(),
-                    updated_at: String::new(),
-                },
-            )?;
-            queries::insert_torrent(
-                &conn,
-                &Torrent {
-                    id: 0,
-                    media_id,
-                    rutracker_topic_id: "123456".to_string(),
-                    title: "Test Torrent".to_string(),
-                    quality: Some("1080p".to_string()),
-                    size_bytes: Some(1000000),
-                    seeders: Some(10),
-                    season_number: None,
-                    episode_info: None,
-                    registered_at: None,
-                    last_checked_at: None,
-                    torrent_hash: None,
-                    qbt_hash: None,
-                    status: "active".to_string(),
-                    auto_update: false,
-                    created_at: String::new(),
-                    updated_at: String::new(),
-                },
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
-
-        let app = web::build_router(state);
-
-        // Will fail with 500 (can't reach RuTracker/qBittorrent) but route exists (not 404)
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/torrents/{}/download", torrent_id))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_ne!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_download_torrent_not_found() {
-        let state = build_test_state();
-        let app = web::build_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/torrents/99999/download")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        // Should return 500 (torrent not found error), not 404 (route not found)
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    #[tokio::test]
     async fn test_track_series_db_integration() {
         let state = build_test_state();
 
@@ -1660,97 +1247,6 @@ anime_dir = "/tmp/anime"
 
         assert_eq!(episodes.len(), 1);
         assert_eq!(episodes[0].title, Some("Pilot".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_update_torrent_endpoint_exists() {
-        let state = build_test_state();
-
-        // Insert a media and torrent
-        let pool = state.db.clone();
-        let torrent_id = tokio::task::spawn_blocking(move || {
-            let conn = pool.get()?;
-            let media_id = queries::insert_media(
-                &conn,
-                &Media {
-                    id: 0,
-                    media_type: "series".to_string(),
-                    title: "Test".to_string(),
-                    title_original: None,
-                    year: None,
-                    tmdb_id: None,
-                    imdb_id: None,
-                    kinopoisk_url: None,
-                    world_art_url: None,
-                    poster_url: None,
-                    overview: None,
-                    anilist_id: None,
-                    status: "tracking".to_string(),
-                    created_at: String::new(),
-                    updated_at: String::new(),
-                },
-            )?;
-            queries::insert_torrent(
-                &conn,
-                &Torrent {
-                    id: 0,
-                    media_id,
-                    rutracker_topic_id: "123456".to_string(),
-                    title: "Test Torrent".to_string(),
-                    quality: Some("1080p".to_string()),
-                    size_bytes: Some(1000000),
-                    seeders: Some(10),
-                    season_number: None,
-                    episode_info: None,
-                    registered_at: Some("2024-01-01".to_string()),
-                    last_checked_at: None,
-                    torrent_hash: None,
-                    qbt_hash: None,
-                    status: "active".to_string(),
-                    auto_update: true,
-                    created_at: String::new(),
-                    updated_at: String::new(),
-                },
-            )
-        })
-        .await
-        .unwrap()
-        .unwrap();
-
-        let app = web::build_router(state);
-
-        // Will fail with 500 (can't reach RuTracker) but route exists (not 404)
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/torrents/{}/update", torrent_id))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_ne!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_update_torrent_not_found() {
-        let state = build_test_state();
-        let app = web::build_router(state);
-
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/torrents/99999/update")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]
@@ -1978,54 +1474,5 @@ anime_dir = "/tmp/anime"
         .unwrap()
         .unwrap();
         assert!(unread.is_empty());
-    }
-
-    #[test]
-    fn test_extract_season_number_s01_pattern() {
-        assert_eq!(extract_season_number("Show.S01.1080p"), Some(1));
-        assert_eq!(extract_season_number("Show.S12E03.720p"), Some(12));
-    }
-
-    #[test]
-    fn test_extract_season_number_lowercase() {
-        assert_eq!(extract_season_number("show.s02e01.1080p"), Some(2));
-    }
-
-    #[test]
-    fn test_extract_season_number_skips_non_season_s() {
-        // "Stranger" has an 'S' but it's not followed by a digit
-        assert_eq!(extract_season_number("Stranger.Things.S03.1080p"), Some(3));
-        // "Super" has an 'S' not followed by digit, should find S2
-        assert_eq!(extract_season_number("Super S2 720p"), Some(2));
-    }
-
-    #[test]
-    fn test_extract_season_number_season_keyword() {
-        assert_eq!(extract_season_number("Show Season 5"), Some(5));
-    }
-
-    #[test]
-    fn test_extract_season_number_russian() {
-        assert_eq!(extract_season_number("Шоу Сезон 3"), Some(3));
-    }
-
-    #[test]
-    fn test_extract_season_number_none() {
-        assert_eq!(extract_season_number("Movie.2024.1080p"), None);
-        assert_eq!(extract_season_number("No season here"), None);
-    }
-
-    #[test]
-    fn test_extract_season_number_ignores_non_season_prefixes() {
-        // "DTS5.1" should not match as season 5
-        assert_eq!(extract_season_number("Movie.DTS5.1.1080p"), None);
-        // "PS4" should not match as season 4
-        assert_eq!(extract_season_number("Game.PS4.Edition"), None);
-        // "MS3" should not match as season 3
-        assert_eq!(extract_season_number("Release.MS3.Final"), None);
-        // But ".S3." should still match (preceded by non-alphanumeric)
-        assert_eq!(extract_season_number("Show.S3.720p"), Some(3));
-        // At start of string should also match
-        assert_eq!(extract_season_number("S1 Episode 5"), Some(1));
     }
 }

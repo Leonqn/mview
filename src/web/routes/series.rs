@@ -317,6 +317,16 @@ async fn download_search_result(
         .await??
     };
 
+    // Auto-set season to tracking when downloading a torrent
+    if season.status != "tracking" {
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            queries::update_season_status(&conn, season_id, "tracking")
+        })
+        .await??;
+    }
+
     info!(
         topic_id = form.topic_id,
         torrent_id, "downloaded torrent from search results"
