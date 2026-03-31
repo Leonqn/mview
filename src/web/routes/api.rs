@@ -831,13 +831,16 @@ async fn download_torrent(
     let filename = format!("{}.torrent", topic_id);
     let save_path = state.config.paths.download_dir.clone();
 
-    // Send to qBittorrent and get hash
-    let qbt_hash = {
+    // Send to qBittorrent
+    {
         let mut qbt = state.qbittorrent.lock().await;
         qbt.ensure_logged_in().await?;
         qbt.add_torrent(&torrent_bytes, &filename, &save_path, "mview")
-            .await?
-    };
+            .await?;
+    }
+
+    // Use torrent_hash from rutracker magnet link as qbt_hash
+    let qbt_hash = torrent.torrent_hash.clone();
 
     info!(
         torrent_id,
@@ -1034,12 +1037,15 @@ async fn check_torrent_update(
         let filename = format!("{}.torrent", topic_id);
         let save_path = state.config.paths.download_dir.clone();
 
-        let new_hash = {
+        {
             let mut qbt = state.qbittorrent.lock().await;
             qbt.ensure_logged_in().await?;
             qbt.add_torrent(&torrent_bytes, &filename, &save_path, "mview")
-                .await?
-        };
+                .await?;
+        }
+
+        // Use torrent_hash from rutracker as qbt_hash
+        let new_hash = topic_info.torrent_hash.clone();
 
         // Download succeeded — persist new metadata and qbt hash together
         let tid = torrent.id;

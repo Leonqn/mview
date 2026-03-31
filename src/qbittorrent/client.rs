@@ -136,7 +136,7 @@ impl QbtClient {
         filename: &str,
         save_path: &str,
         category: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<()> {
         let mut resp = self
             .send_add_torrent(torrent_bytes, filename, save_path, category)
             .await?;
@@ -162,27 +162,7 @@ impl QbtClient {
 
         info!(filename, "torrent added to qbittorrent");
 
-        // qBittorrent doesn't return the hash on add, so query the torrent list
-        // and find the most recently added torrent in the category.
-        // Retry a few times since qBittorrent may not index the torrent immediately.
-        for attempt in 0..3 {
-            if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
-            if let Some(t) = self.find_most_recent_torrent(category).await? {
-                return Ok(Some(t.hash));
-            }
-            debug!(attempt, "torrent not yet visible in qbittorrent, retrying");
-        }
-
-        Ok(None)
-    }
-
-    /// Find the most recently added torrent in a category.
-    async fn find_most_recent_torrent(&mut self, category: &str) -> Result<Option<QbtTorrent>> {
-        let mut torrents = self.get_torrents(Some(category)).await?;
-        torrents.sort_by(|a, b| b.added_on.cmp(&a.added_on));
-        Ok(torrents.into_iter().next())
+        Ok(())
     }
 
     /// Send an API request, retrying once with re-login if the session has expired (403).

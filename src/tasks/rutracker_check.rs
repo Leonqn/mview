@@ -131,16 +131,18 @@ async fn check_single_torrent(
     let save_path = state.config.paths.download_dir.clone();
 
     // Re-add to qBittorrent (qBittorrent handles replacing existing torrents)
-    let new_hash = {
+    {
         let mut qbt = state.qbittorrent.lock().await;
         qbt.ensure_logged_in().await?;
         qbt.add_torrent(&torrent_bytes, &filename, &save_path, "mview")
-            .await?
-    };
+            .await?;
+    }
+
+    // Use torrent_hash from rutracker as qbt_hash
+    let new_qbt_hash = result.new_torrent_hash.clone();
 
     // Download succeeded — now persist all new metadata and reset status
     let torrent_id = torrent.id;
-    let new_hash_clone = new_hash.clone();
     let new_registered_at = result.new_registered_at.clone();
     let new_torrent_hash = result.new_torrent_hash.clone();
     let pool = state.db.clone();
@@ -152,7 +154,7 @@ async fn check_single_torrent(
         if let Some(ref hash) = new_torrent_hash {
             queries::update_torrent_hash(&conn, torrent_id, hash)?;
         }
-        if let Some(ref hash) = new_hash_clone {
+        if let Some(ref hash) = new_qbt_hash {
             queries::update_torrent_qbt_hash(&conn, torrent_id, hash)?;
         }
         queries::update_torrent_status(&conn, torrent_id, "active")

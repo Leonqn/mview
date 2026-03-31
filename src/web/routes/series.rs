@@ -246,12 +246,15 @@ async fn download_search_result(
     let filename = format!("{}.torrent", form.topic_id);
     let save_path = state.config.paths.download_dir.clone();
 
-    let qbt_hash = {
+    {
         let mut qbt = state.qbittorrent.lock().await;
         qbt.ensure_logged_in().await?;
         qbt.add_torrent(&torrent_bytes, &filename, &save_path, "mview")
-            .await?
-    };
+            .await?;
+    }
+
+    // Use torrent_hash from rutracker magnet link as qbt_hash
+    let qbt_hash = topic_info.torrent_hash.clone();
 
     // Both external operations succeeded — now persist to DB
     let torrent = crate::db::models::Torrent {
