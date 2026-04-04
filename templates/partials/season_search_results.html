@@ -2,43 +2,112 @@
 <p style="color: var(--pico-del-color);">{{ error }}</p>
 {% endfor %}
 {% if results %}
-<div style="overflow-x:auto;">
-<table>
-    <thead>
-        <tr>
-            <th>Title</th>
-            <th>Tags</th>
-            <th>Size</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for r in results %}
-        <tr>
-            <td><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a></td>
-            <td>
-                <div style="display:flex;flex-wrap:wrap;gap:2px;">
-                {% for tag in r.title | extract_tags %}
-                <span style="border:1px solid var(--pico-muted-border-color);padding:1px 6px;border-radius:4px;font-size:0.75em;white-space:nowrap;">{{ tag }}</span>
-                {% endfor %}
-                </div>
-            </td>
-            <td>{{ r.size }}</td>
-            <td>
-                <button
-                    hx-post="/media/seasons/{{ season_id }}/download"
-                    hx-vals='{"topic_id":"{{ r.topic_id }}","media_id":{{ media_id }},"size_bytes":{{ r.size_bytes }}}'
-                    hx-target="#season-{{ season_id }}"
-                    hx-swap="innerHTML"
-                    class="outline"
-                    style="padding:4px 12px;margin:0;"
-                >Download</button>
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+<div class="sr-container">
+    <div class="sr-filters" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:0.5rem;align-items:center;">
+        <span style="font-size:0.8em;opacity:0.6;margin-right:4px;">Tags:</span>
+        <button class="outline sr-tag-btn sr-tag-active" data-tag="all" style="margin:0;padding:1px 8px;font-size:0.75em;">All</button>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th style="min-width:150px;">Title</th>
+                <th style="width:300px;max-width:300px;">Tags</th>
+                <th style="white-space:nowrap;">Size</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in results %}
+            <tr data-tags="{{ r.title | extract_tags | join(',') }}">
+                <td><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a></td>
+                <td style="max-width:300px;">
+                    <div style="display:flex;flex-wrap:wrap;gap:2px;">
+                    {% for tag in r.title | extract_tags %}
+                    <span class="sr-tag" data-tag="{{ tag }}" style="border:1px solid var(--pico-muted-border-color);padding:1px 6px;border-radius:4px;font-size:0.75em;white-space:nowrap;cursor:pointer;">{{ tag }}</span>
+                    {% endfor %}
+                    </div>
+                </td>
+                <td style="white-space:nowrap;">{{ r.size }}</td>
+                <td>
+                    <button
+                        hx-post="/media/seasons/{{ season_id }}/download"
+                        hx-vals='{"topic_id":"{{ r.topic_id }}","media_id":{{ media_id }},"size_bytes":{{ r.size_bytes }}}'
+                        hx-target="#season-{{ season_id }}"
+                        hx-swap="innerHTML"
+                        class="outline"
+                        style="padding:4px 12px;margin:0;"
+                    >Download</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </div>
+<script>
+(function() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .sr-tag-active { background: var(--pico-primary-background) !important; color: var(--pico-primary-inverse) !important; border-color: var(--pico-primary-background) !important; }
+        .sr-tag:hover { background: var(--pico-primary-focus) !important; }
+        .sr-tag-hl { background: var(--pico-primary-background) !important; color: var(--pico-primary-inverse) !important; border-color: var(--pico-primary-background) !important; }
+    `;
+    document.head.appendChild(style);
+
+    // find the container that was just inserted
+    const containers = document.querySelectorAll('.sr-container');
+    const root = containers[containers.length - 1];
+    if (!root) return;
+
+    const filters = root.querySelector('.sr-filters');
+    const rows = root.querySelectorAll('tbody tr');
+    let active = new Set();
+
+    function applyFilter() {
+        rows.forEach(r => {
+            if (active.size === 0) { r.style.display = ''; return; }
+            const tags = (r.dataset.tags || '').split(',');
+            r.style.display = [...active].every(t => tags.includes(t)) ? '' : 'none';
+        });
+        root.querySelectorAll('.sr-tag').forEach(s => {
+            s.classList.toggle('sr-tag-hl', active.has(s.dataset.tag));
+        });
+        filters.querySelectorAll('.sr-tag-btn').forEach(b => {
+            if (b.dataset.tag === 'all') {
+                b.classList.toggle('sr-tag-active', active.size === 0);
+            } else {
+                b.classList.toggle('sr-tag-active', active.has(b.dataset.tag));
+            }
+        });
+    }
+
+    function toggle(tag) {
+        if (tag === 'all') { active.clear(); }
+        else if (active.has(tag)) { active.delete(tag); }
+        else { active.add(tag); }
+        applyFilter();
+    }
+
+    function ensureBtn(tag) {
+        if (filters.querySelector(`.sr-tag-btn[data-tag="${CSS.escape(tag)}"]`)) return;
+        const btn = document.createElement('button');
+        btn.className = 'outline sr-tag-btn';
+        btn.dataset.tag = tag;
+        btn.textContent = tag;
+        Object.assign(btn.style, { margin: '0', padding: '1px 8px', fontSize: '0.75em' });
+        btn.addEventListener('click', () => toggle(tag));
+        filters.appendChild(btn);
+    }
+
+    filters.querySelector('.sr-tag-btn[data-tag="all"]').addEventListener('click', () => toggle('all'));
+
+    root.querySelectorAll('.sr-tag').forEach(el => {
+        el.addEventListener('click', () => {
+            ensureBtn(el.dataset.tag);
+            toggle(el.dataset.tag);
+        });
+    });
+})();
+</script>
 {% else %}
 <p>No results found.</p>
 {% endif %}

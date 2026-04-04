@@ -702,6 +702,30 @@ async fn delete_torrent_endpoint(
         }
     }
 
+    // Reset downloaded status for episodes in the same season
+    if let Some(season_number) = torrent.season_number {
+        let media_id = torrent.media_id;
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+            if let Some(season) = seasons.iter().find(|s| s.season_number == season_number) {
+                let episodes = queries::get_episodes_for_season(&conn, season.id)?;
+                for ep in &episodes {
+                    if ep.downloaded {
+                        queries::update_episode_downloaded(&conn, ep.id, false, None)?;
+                    }
+                }
+                // Reset season status back to tracking if it was completed
+                if season.status == "completed" {
+                    queries::update_season_status(&conn, season.id, "tracking")?;
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await??;
+    }
+
     // Delete from DB
     let pool = state.db.clone();
     tokio::task::spawn_blocking(move || {
@@ -741,12 +765,19 @@ async fn torrent_progress(
         Err(_) => None,
     };
 
+    let delete_btn = format!(
+        " <button hx-post=\"/api/torrents/{tid}/delete\" hx-target=\"#torrent-{tid}\" hx-swap=\"outerHTML\" hx-confirm=\"Delete torrent and all downloaded files?\" class=\"outline secondary\" style=\"margin:0;padding:1px 8px;font-size:0.8em;\">Delete</button>",
+        tid = torrent_id
+    );
+
     let html = match progress {
-        Some(p) if p >= 100.0 => "<span style=\"color:green;\">Completed</span>".to_string(),
-        Some(p) => {
-            format!("<span style=\"color:orange;\">Downloading {p}%</span>")
+        Some(p) if p >= 100.0 => {
+            format!("<span style=\"color:green;\">Completed</span>{delete_btn}")
         }
-        None => "<span style=\"color:orange;\">Downloading</span>".to_string(),
+        Some(p) => {
+            format!("<span style=\"color:orange;\">Downloading {p}%</span>{delete_btn}")
+        }
+        None => format!("<span style=\"color:orange;\">Downloading</span>{delete_btn}"),
     };
 
     Ok(Html(html))

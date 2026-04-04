@@ -2,6 +2,7 @@ pub mod anilist_check;
 pub mod download_monitor;
 pub mod rutracker_check;
 pub mod tmdb_check;
+pub mod torrent_search;
 
 use std::sync::Arc;
 
@@ -19,6 +20,7 @@ pub fn spawn_tasks(state: Arc<AppState>) -> Vec<tokio::task::JoinHandle<()>> {
     handles.push(tokio::spawn(rutracker_check::run(state.clone())));
     handles.push(tokio::spawn(tmdb_check::run(state.clone())));
     handles.push(tokio::spawn(anilist_check::run(state.clone())));
+    handles.push(tokio::spawn(torrent_search::run(state.clone())));
 
     handles
 }

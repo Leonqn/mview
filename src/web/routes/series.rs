@@ -335,11 +335,6 @@ async fn download_search_result(
     render_season_partial(&state, season_id).await
 }
 
-/// Returns true if the title contains only ASCII characters.
-fn is_ascii_title(title: &str) -> bool {
-    title.is_ascii()
-}
-
 #[cfg(test)]
 fn dedup_search_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
     let mut seen = HashSet::new();
@@ -347,59 +342,6 @@ fn dedup_search_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
         .into_iter()
         .filter(|r| seen.insert(r.topic_id.clone()))
         .collect()
-}
-
-/// Returns true if the name is a generic season label like "Season 1", "Сезон 2", etc.
-fn is_generic_season_name(name: &str) -> bool {
-    use regex::Regex;
-    use std::sync::LazyLock;
-
-    static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)^(season|сезон|specials?)\s*\d*$").unwrap());
-    RE.is_match(name.trim())
-}
-
-/// Parse an anime season title to extract the base title and season number.
-///
-/// AniList titles for sequels often follow patterns like:
-/// - "Title 2nd Season" → ("Title", 2)
-/// - "Title Season 2" → ("Title", 2)
-/// - "Title Part 2" → ("Title", 2)
-/// - "Title" (no suffix) → ("Title", 1)
-fn parse_anime_season_title(title: &str) -> (&str, i64) {
-    use regex::Regex;
-    use std::sync::LazyLock;
-
-    static ORDINAL_SEASON: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\s+((\d+)(?:st|nd|rd|th)\s+season)$").unwrap());
-    static SEASON_NUM: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\s+(season\s+(\d+))$").unwrap());
-    static PART_NUM: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\s+(part\s+(\d+))$").unwrap());
-    static COUR_NUM: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)\s+(cour\s+(\d+))$").unwrap());
-
-    for re in [&*ORDINAL_SEASON, &*SEASON_NUM, &*PART_NUM, &*COUR_NUM] {
-        if let Some(caps) = re.captures(title) {
-            let num: i64 = caps[2].parse().unwrap_or(1);
-            let base = &title[..caps.get(0).unwrap().start()];
-            let base = base.trim_end_matches(&[' ', ':'][..]).trim();
-            return (base, num);
-        }
-    }
-
-    (title, 1)
-}
-
-/// Build search queries for a season of a series.
-/// Returns 4 queries: "Title Season N", "Title Сезон N", "Title TV-N", "Title ТВ-N".
-fn build_season_queries(title: &str, season_number: i64) -> Vec<String> {
-    vec![
-        format!("{} Season {}", title, season_number),
-        format!("{} Сезон {}", title, season_number),
-        format!("{} TV-{}", title, season_number),
-        format!("{} ТВ-{}", title, season_number),
-    ]
 }
 
 async fn search_season(
@@ -425,55 +367,9 @@ async fn search_season(
     })
     .await??;
 
-    // Determine search name: use original title if ASCII, otherwise use localized title
-    let search_name = media
-        .title_original
-        .as_deref()
-        .filter(|t| is_ascii_title(t))
-        .unwrap_or(&media.title);
-
-    let season_name = season.title.as_deref().unwrap_or(search_name);
-    let fmt = season.format.as_deref().unwrap_or("");
-
-    let search_queries =
-        if media.media_type == "movie" || fmt == "MOVIE" || fmt == "OVA" || fmt == "SPECIAL" {
-            // Movies/OVA/specials — search by title only
-            vec![season_name.to_string()]
-        } else if media.media_type == "anime" && season.anilist_id.is_some() {
-            // AniList anime — parse title to extract base name and season number,
-            // then build TV-N queries from the season's own title (not media title)
-            let (base_title, season_num) = parse_anime_season_title(season_name);
-            let mut queries = vec![
-                format!("{} TV-{}", base_title, season_num),
-                format!("{} ТВ-{}", base_title, season_num),
-            ];
-            // AniList season title (e.g. "Fate/Zero 2nd Season") before base title
-            if base_title != season_name {
-                queries.push(season_name.to_string());
-            }
-            // Base title last as the broadest query
-            queries.push(base_title.to_string());
-            queries
-        } else if media.media_type == "anime" {
-            // TMDB anime — use media title with TV-N (season numbering from TMDB is correct)
-            let mut queries = vec![
-                format!("{} TV-{}", search_name, tv_season_number),
-                format!("{} ТВ-{}", search_name, tv_season_number),
-            ];
-            if !is_generic_season_name(season_name) && season_name != search_name {
-                queries.push(season_name.to_string());
-            }
-            queries.push(search_name.to_string());
-            queries
-        } else {
-            let mut queries = build_season_queries(search_name, season.season_number);
-            // Add season-specific title if it's meaningful (not just "Season N")
-            if season_name != search_name && !is_generic_season_name(season_name) {
-                queries.push(season_name.to_string());
-            }
-            queries.push(search_name.to_string());
-            queries
-        };
+    let sq = crate::search::build_queries(&media, &season, tv_season_number);
+    let (search_queries, fallback_queries): (Vec<String>, Vec<String>) =
+        { (sq.primary, sq.fallback) };
 
     info!(
         season_id,
@@ -482,7 +378,7 @@ async fn search_season(
         "searching season torrents"
     );
 
-    // Execute all queries concurrently, tracking which query each result came from
+    // Execute primary queries concurrently, tracking which query each result came from
     let mut all_results: Vec<(usize, SearchResult)> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
 
@@ -498,6 +394,28 @@ async fn search_season(
             Err(error) => {
                 tracing::warn!(?error, "rutracker season search failed");
                 errors.push(format!("search failed: {error}"));
+            }
+        }
+    }
+
+    // If primary queries returned nothing, try fallback (broader) queries
+    if all_results.is_empty() && !fallback_queries.is_empty() {
+        info!(queries = ?fallback_queries, "primary search empty, trying fallback queries");
+
+        let base_idx = search_queries.len();
+        let futures: Vec<_> = fallback_queries
+            .iter()
+            .map(|q| state.rutracker.search(q))
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        for (query_idx, result) in results.into_iter().enumerate() {
+            match result {
+                Ok(r) => all_results.extend(r.into_iter().map(|sr| (base_idx + query_idx, sr))),
+                Err(error) => {
+                    tracing::warn!(?error, "rutracker fallback search failed");
+                    errors.push(format!("search failed: {error}"));
+                }
             }
         }
     }
@@ -892,26 +810,6 @@ anime_dir = "/tmp/anime"
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    #[test]
-    fn test_is_ascii_title() {
-        assert!(is_ascii_title("Breaking Bad"));
-        assert!(is_ascii_title("Attack on Titan"));
-        assert!(is_ascii_title(""));
-        assert!(!is_ascii_title("進撃の巨人"));
-        assert!(!is_ascii_title("Наруто"));
-        assert!(!is_ascii_title("Attack on Titan / 進撃の巨人"));
-    }
-
-    #[test]
-    fn test_build_season_queries() {
-        let queries = build_season_queries("Breaking Bad", 3);
-        assert_eq!(queries.len(), 4);
-        assert_eq!(queries[0], "Breaking Bad Season 3");
-        assert_eq!(queries[1], "Breaking Bad Сезон 3");
-        assert_eq!(queries[2], "Breaking Bad TV-3");
-        assert_eq!(queries[3], "Breaking Bad ТВ-3");
     }
 
     #[test]

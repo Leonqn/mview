@@ -74,6 +74,14 @@ pub struct Notification {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchCache {
+    pub id: i64,
+    pub season_id: i64,
+    pub results_count: i64,
+    pub last_searched_at: String,
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptchaRequest {

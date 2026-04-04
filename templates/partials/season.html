@@ -66,8 +66,8 @@
         <tbody>
             {% for torrent in entry.torrents %}
             <tr id="torrent-{{ torrent.id }}">
-                <td><a href="https://rutracker.org/forum/viewtopic.php?t={{ torrent.rutracker_topic_id }}" target="_blank" rel="noopener">{{ torrent.title | truncate(60) }}</a></td>
-                <td>
+                <td><a href="https://rutracker.org/forum/viewtopic.php?t={{ torrent.rutracker_topic_id }}" target="_blank" rel="noopener" style="font-size:0.85em;">{{ torrent.title | truncate(40) }}</a></td>
+                <td style="max-width:300px;">
                     <div style="display:flex;flex-wrap:wrap;gap:2px;">
                     {% for tag in torrent.title | extract_tags %}
                     <span style="border:1px solid var(--pico-muted-border-color);padding:1px 6px;border-radius:4px;font-size:0.75em;white-space:nowrap;">{{ tag }}</span>

@@ -559,6 +559,71 @@ pub fn mark_notification_read(conn: &Connection, id: i64) -> Result<()> {
 
 use rusqlite::OptionalExtension;
 
+// --- Search Cache ---
+
+fn row_to_search_cache(row: &rusqlite::Row) -> rusqlite::Result<SearchCache> {
+    Ok(SearchCache {
+        id: row.get(0)?,
+        season_id: row.get(1)?,
+        results_count: row.get(2)?,
+        last_searched_at: row.get(3)?,
+    })
+}
+
+pub fn upsert_search_cache(conn: &Connection, season_id: i64, results_count: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO search_cache (season_id, results_count, last_searched_at)
+         VALUES (?1, ?2, datetime('now'))
+         ON CONFLICT(season_id) DO UPDATE SET results_count = ?2, last_searched_at = datetime('now')",
+        params![season_id, results_count],
+    )
+    .with_context(|| "failed to upsert search cache")?;
+    Ok(())
+}
+
+pub fn get_search_cache_for_season(
+    conn: &Connection,
+    season_id: i64,
+) -> Result<Option<SearchCache>> {
+    let result = conn
+        .prepare(
+            "SELECT id, season_id, results_count, last_searched_at
+             FROM search_cache WHERE season_id = ?1",
+        )
+        .with_context(|| "failed to prepare get_search_cache")?
+        .query_row(params![season_id], row_to_search_cache)
+        .optional()
+        .with_context(|| "failed to get search cache")?;
+    Ok(result)
+}
+
+pub fn get_search_cache_for_seasons(
+    conn: &Connection,
+    season_ids: &[i64],
+) -> Result<Vec<SearchCache>> {
+    if season_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let placeholders: String = season_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT id, season_id, results_count, last_searched_at
+         FROM search_cache WHERE season_id IN ({}) AND results_count > 0",
+        placeholders
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .with_context(|| "failed to prepare get_search_cache_for_seasons")?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = season_ids
+        .iter()
+        .map(|id| id as &dyn rusqlite::types::ToSql)
+        .collect();
+    let rows = stmt
+        .query_map(params.as_slice(), row_to_search_cache)
+        .with_context(|| "failed to get search cache for seasons")?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .with_context(|| "failed to collect search cache rows")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

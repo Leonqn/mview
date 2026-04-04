@@ -6,7 +6,7 @@ use axum::response::Html;
 use axum::routing::get;
 use serde::Serialize;
 
-use chrono::Local;
+use chrono::{Datelike, Local};
 
 use crate::db::queries;
 use crate::error::AppError;
@@ -44,27 +44,38 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
             let today = Local::now().format("%Y-%m-%d").to_string();
             let seasons = queries::get_tracking_seasons_for_media(&conn, media.id)?;
             let torrents = queries::get_torrents_for_media(&conn, media.id)?;
+            let season_ids: Vec<i64> = seasons.iter().map(|s| s.id).collect();
+            let search_cache = queries::get_search_cache_for_seasons(&conn, &season_ids)?;
             let mut season_infos = Vec::new();
             let mut any_pending = false;
+            let current_year = Local::now().year();
             for s in &seasons {
                 let episodes = queries::get_episodes_for_season(&conn, s.id).unwrap_or_default();
+                let media_released = media
+                    .year
+                    .map(|y| y <= current_year as i64)
+                    .unwrap_or(false);
                 let aired: Vec<_> = episodes
                     .iter()
                     .filter(|e| {
                         e.air_date
                             .as_deref()
                             .map(|d| d <= today.as_str())
-                            .unwrap_or(false)
+                            .unwrap_or(media_released)
                     })
                     .collect();
                 let downloaded = aired.iter().filter(|e| e.downloaded).count();
                 let total = aired.len();
+                let has_torrent = torrents
+                    .iter()
+                    .any(|t| t.season_number == Some(s.season_number));
                 let downloading = torrents.iter().any(|t| {
                     t.status == "active"
                         && t.season_number == Some(s.season_number)
                         && t.qbt_hash.is_some()
                 });
-                let pending = downloaded < total;
+                let search_found = search_cache.iter().any(|c| c.season_id == s.id);
+                let pending = downloaded < total && search_found && !has_torrent;
                 if pending {
                     any_pending = true;
                 }

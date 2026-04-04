@@ -130,6 +130,20 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     )
     .with_context(|| "Failed to run migrations")?;
 
+    // Migration: search cache for auto-search results
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS search_cache (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            season_id       INTEGER NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+            results_count   INTEGER NOT NULL DEFAULT 0,
+            last_searched_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(season_id)
+        );
+        ",
+    )
+    .with_context(|| "Failed to run search_cache migration")?;
+
     Ok(())
 }
 

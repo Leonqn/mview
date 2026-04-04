@@ -5,6 +5,7 @@ mod error;
 mod plex;
 mod qbittorrent;
 mod rutracker;
+mod search;
 mod tasks;
 mod telegram;
 mod tmdb;

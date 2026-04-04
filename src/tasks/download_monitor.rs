@@ -371,8 +371,21 @@ async fn organize_series_files(
     let mut sorted_files: Vec<_> = video_files.to_vec();
     sorted_files.sort_by_key(|f| extract_episode_number(&f.name).unwrap_or(i64::MAX));
 
+    // Detect 0-based file numbering: if files start at 0 but DB has no episode 0, shift +1
+    let file_starts_at_zero = sorted_files
+        .first()
+        .and_then(|f| extract_episode_number(&f.name))
+        == Some(0);
+    let db_has_episode_zero = episodes.iter().any(|e| e.episode_number == 0);
+    let episode_offset: i64 = if file_starts_at_zero && !db_has_episode_zero {
+        1
+    } else {
+        0
+    };
+
     for (idx, file) in sorted_files.iter().enumerate() {
-        let episode_number = extract_episode_number(&file.name).unwrap_or((idx as i64) + 1);
+        let episode_number =
+            extract_episode_number(&file.name).unwrap_or((idx as i64) + 1) + episode_offset;
 
         // Try to find matching episode in DB
         let episode = episodes.iter().find(|e| e.episode_number == episode_number);
@@ -495,9 +508,7 @@ fn extract_episode_number(filename: &str) -> Option<i64> {
             {
                 let after_e = &upper[j + 1..];
                 let num_str: String = after_e.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if let Ok(n) = num_str.parse::<i64>()
-                    && n > 0
-                {
+                if let Ok(n) = num_str.parse::<i64>() {
                     return Some(n);
                 }
             }
@@ -510,9 +521,7 @@ fn extract_episode_number(filename: &str) -> Option<i64> {
         if let Some(pos) = lower.find(prefix) {
             let after = &lower[pos + prefix.len()..];
             let num_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(n) = num_str.parse::<i64>()
-                && n > 0
-            {
+            if let Ok(n) = num_str.parse::<i64>() {
                 return Some(n);
             }
         }
@@ -551,8 +560,7 @@ fn extract_episode_number(filename: &str) -> Option<i64> {
                     || chars_vec[start_idx - 1] == 'h'
                     || chars_vec[start_idx - 1] == 'H');
             if let Ok(n) = num_str.parse::<i64>()
-                && n > 0
-                && n < 1000
+                && (0..1000).contains(&n)
                 && !is_resolution
                 && !is_codec
                 && !resolution_numbers.contains(&n)
@@ -775,6 +783,18 @@ mod tests {
     fn test_extract_episode_number_fallback_digit() {
         // Falls back to last digit group that isn't a resolution
         assert_eq!(extract_episode_number("Show.05.mkv"), Some(5));
+    }
+
+    #[test]
+    fn test_extract_episode_number_zero() {
+        assert_eq!(
+            extract_episode_number(
+                "[Beatrice-Raws] Fate Stay Night - Unlimited Blade Works 00 [BDRip 1920x1080 HEVC TrueHD].mkv"
+            ),
+            Some(0)
+        );
+        assert_eq!(extract_episode_number("Show.S01E00.Special.mkv"), Some(0));
+        assert_eq!(extract_episode_number("Show Episode 0.mkv"), Some(0));
     }
 
     #[test]
