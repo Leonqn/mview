@@ -38,9 +38,29 @@ impl RutrackerClient {
             .await
             .context("Failed to fetch search results")?;
         let results = parse_search_results(&html, self.base_url())?;
-        info!(query, count = results.len(), "rutracker search completed");
+        let total = results.len();
+        let results: Vec<SearchResult> = results
+            .into_iter()
+            .filter(|r| !is_audio_only_forum(&r.forum_name))
+            .collect();
+        info!(
+            query,
+            count = results.len(),
+            dropped_audio = total - results.len(),
+            "rutracker search completed"
+        );
         Ok(results)
     }
+}
+
+/// Check if a rutracker forum name indicates soundtrack/music content (to be excluded).
+fn is_audio_only_forum(forum_name: &str) -> bool {
+    let lower = forum_name.to_lowercase();
+    lower.contains("саундтрек")
+        || lower.contains("ost")
+        || lower.contains("музык")
+        || lower.contains("soundtrack")
+        || lower.contains("soundtracks")
 }
 
 /// Replace characters in the query that rutracker treats as search operators.
@@ -223,6 +243,17 @@ mod tests {
         assert_eq!(extract_topic_id("viewtopic.php?t=12345"), "12345");
         assert_eq!(extract_topic_id("viewtopic.php?t=999&start=0"), "999");
         assert_eq!(extract_topic_id("something_else"), "");
+    }
+
+    #[test]
+    fn test_is_audio_only_forum() {
+        assert!(is_audio_only_forum("Саундтреки, караоке и мьюзиклы"));
+        assert!(is_audio_only_forum("Аниме OST"));
+        assert!(is_audio_only_forum("Зарубежная рок-музыка"));
+        assert!(is_audio_only_forum("Soundtracks"));
+        assert!(!is_audio_only_forum("Аниме"));
+        assert!(!is_audio_only_forum("Сериалы"));
+        assert!(!is_audio_only_forum("Зарубежные фильмы"));
     }
 
     #[test]
