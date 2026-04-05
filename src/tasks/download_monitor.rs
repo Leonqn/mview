@@ -157,10 +157,11 @@ async fn process_completed_torrent(
     .await??
     .ok_or_else(|| anyhow::anyhow!("Media {} not found for torrent {}", media_id, db_torrent.id))?;
 
-    let video_files: Vec<_> = files
+    let all_video_files: Vec<_> = files
         .iter()
         .filter(|f| organizer::is_video_file(Path::new(&f.name)))
         .collect();
+    let video_files = filter_root_video_files(&all_video_files);
 
     let companion_files: Vec<_> = files
         .iter()
@@ -371,21 +372,8 @@ async fn organize_series_files(
     let mut sorted_files: Vec<_> = video_files.to_vec();
     sorted_files.sort_by_key(|f| extract_episode_number(&f.name).unwrap_or(i64::MAX));
 
-    // Detect 0-based file numbering: if files start at 0 but DB has no episode 0, shift +1
-    let file_starts_at_zero = sorted_files
-        .first()
-        .and_then(|f| extract_episode_number(&f.name))
-        == Some(0);
-    let db_has_episode_zero = episodes.iter().any(|e| e.episode_number == 0);
-    let episode_offset: i64 = if file_starts_at_zero && !db_has_episode_zero {
-        1
-    } else {
-        0
-    };
-
     for (idx, file) in sorted_files.iter().enumerate() {
-        let episode_number =
-            extract_episode_number(&file.name).unwrap_or((idx as i64) + 1) + episode_offset;
+        let episode_number = extract_episode_number(&file.name).unwrap_or((idx as i64) + 1);
 
         // Try to find matching episode in DB
         let episode = episodes.iter().find(|e| e.episode_number == episode_number);
@@ -485,6 +473,26 @@ fn sanitize_path(path: &str) -> PathBuf {
         }
     }
     result
+}
+
+/// Filter video files to only include those at the shallowest directory level.
+/// This excludes files from subfolders like NC/, Extras/, etc.
+fn filter_root_video_files<'a>(
+    files: &[&'a crate::qbittorrent::client::QbtTorrentFile],
+) -> Vec<&'a crate::qbittorrent::client::QbtTorrentFile> {
+    if files.is_empty() {
+        return Vec::new();
+    }
+    let min_depth = files
+        .iter()
+        .map(|f| Path::new(&f.name).components().count())
+        .min()
+        .unwrap_or(1);
+    files
+        .iter()
+        .filter(|f| Path::new(&f.name).components().count() == min_depth)
+        .copied()
+        .collect()
 }
 
 /// Extract episode number from a filename using common patterns (S01E03, E03, 03, etc.).

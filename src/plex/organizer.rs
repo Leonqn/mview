@@ -113,7 +113,7 @@ pub fn organize_file(source: &Path, dest: &Path) -> Result<()> {
             std::fs::copy(source, dest).with_context(|| {
                 format!("Failed to copy {} -> {}", source.display(), dest.display())
             })?;
-            info!(source = %source.display(), dest = %dest.display(), "copied");
+            warn!(source = %source.display(), dest = %dest.display(), "copied (fallback, using 2x disk space)");
             Ok(())
         }
     }

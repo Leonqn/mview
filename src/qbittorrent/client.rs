@@ -168,14 +168,14 @@ impl QbtClient {
 
     /// Delete a torrent from qBittorrent by hash, optionally deleting downloaded files.
     pub async fn delete_torrent(&mut self, hash: &str, delete_files: bool) -> Result<()> {
-        let url = format!(
-            "{}/api/v2/torrents/delete?hashes={}&deleteFiles={}",
-            self.base_url,
-            urlencoding::encode(hash),
-            delete_files
-        );
+        let url = format!("{}/api/v2/torrents/delete", self.base_url);
 
-        let resp = self.api_get(&url).await?;
+        let form = [
+            ("hashes", hash.to_string()),
+            ("deleteFiles", delete_files.to_string()),
+        ];
+
+        let resp = self.api_post(&url, &form).await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -187,7 +187,7 @@ impl QbtClient {
         Ok(())
     }
 
-    /// Send an API request, retrying once with re-login if the session has expired (403).
+    /// Send a GET API request, retrying once with re-login if the session has expired (403).
     async fn api_get(&mut self, url: &str) -> Result<reqwest::Response> {
         let resp = self
             .client
@@ -203,6 +203,32 @@ impl QbtClient {
             return self
                 .client
                 .get(url)
+                .send()
+                .await
+                .context("Failed to send qBittorrent API request after re-login");
+        }
+
+        Ok(resp)
+    }
+
+    /// Send a POST API request with form data, retrying once with re-login if 403.
+    async fn api_post(&mut self, url: &str, form: &[(&str, String)]) -> Result<reqwest::Response> {
+        let resp = self
+            .client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .context("Failed to send qBittorrent API request")?;
+
+        if resp.status() == reqwest::StatusCode::FORBIDDEN && self.auth_required() {
+            debug!("qbittorrent session expired, re-logging in");
+            self.logged_in = false;
+            self.login().await?;
+            return self
+                .client
+                .post(url)
+                .form(form)
                 .send()
                 .await
                 .context("Failed to send qBittorrent API request after re-login");

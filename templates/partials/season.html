@@ -92,10 +92,19 @@
                             hx-post="/api/torrents/{{ torrent.id }}/delete"
                             hx-target="#torrent-{{ torrent.id }}"
                             hx-swap="outerHTML"
-                            hx-confirm="Delete torrent and all downloaded files?"
+                            hx-confirm="Remove from DB + Plex library? Torrent in qBittorrent will keep seeding."
                             class="outline secondary"
                             style="margin:0;padding:1px 8px;font-size:0.8em;"
                         >Delete</button>
+                        <button
+                            hx-post="/api/torrents/{{ torrent.id }}/delete"
+                            hx-vals='{"delete_files":"true"}'
+                            hx-target="#torrent-{{ torrent.id }}"
+                            hx-swap="outerHTML"
+                            hx-confirm="Delete torrent AND remove downloaded files from disk?"
+                            class="outline secondary"
+                            style="margin:0;padding:1px 8px;font-size:0.8em;"
+                        >Delete + Files</button>
                     {% elif torrent.qbt_hash %}
                     <span style="color:orange;">Downloading</span>
                     <button

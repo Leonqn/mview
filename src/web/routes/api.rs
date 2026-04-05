@@ -682,10 +682,19 @@ async fn track_anime(state: &AppState, anilist_id: i64) -> anyhow::Result<i64> {
     Ok(media_id)
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct DeleteTorrentForm {
+    #[serde(default)]
+    pub delete_files: bool,
+}
+
 async fn delete_torrent_endpoint(
     State(state): State<Arc<AppState>>,
     Path(torrent_id): Path<i64>,
+    Form(form): Form<DeleteTorrentForm>,
 ) -> Result<Html<String>, AppError> {
+    let delete_files = form.delete_files;
+
     let pool = state.db.clone();
     let torrent = tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
@@ -694,25 +703,30 @@ async fn delete_torrent_endpoint(
     .await??
     .ok_or_else(|| anyhow::anyhow!("torrent not found"))?;
 
-    // Delete from qBittorrent (with files) if it has a hash
-    if let Some(ref hash) = torrent.qbt_hash {
+    // Only touch qBittorrent when `delete_files` is set: remove the torrent
+    // AND its source files. Without the flag, the torrent keeps seeding.
+    if delete_files && let Some(ref hash) = torrent.qbt_hash {
         let mut qbt = state.qbittorrent.lock().await;
         if let Err(e) = qbt.delete_torrent(hash, true).await {
             error!(torrent_id, error = %e, "failed to delete torrent from qbittorrent");
         }
     }
 
-    // Reset downloaded status for episodes in the same season
-    if let Some(season_number) = torrent.season_number {
+    // Collect Plex file paths for completed episodes in this season, then reset downloaded status.
+    let plex_paths: Vec<String> = if let Some(season_number) = torrent.season_number {
         let media_id = torrent.media_id;
         let pool = state.db.clone();
         tokio::task::spawn_blocking(move || {
             let conn = pool.get()?;
             let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+            let mut paths = Vec::new();
             if let Some(season) = seasons.iter().find(|s| s.season_number == season_number) {
                 let episodes = queries::get_episodes_for_season(&conn, season.id)?;
                 for ep in &episodes {
                     if ep.downloaded {
+                        if let Some(ref path) = ep.file_path {
+                            paths.push(path.clone());
+                        }
                         queries::update_episode_downloaded(&conn, ep.id, false, None)?;
                     }
                 }
@@ -721,12 +735,17 @@ async fn delete_torrent_endpoint(
                     queries::update_season_status(&conn, season.id, "tracking")?;
                 }
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, anyhow::Error>(paths)
         })
-        .await??;
-    }
+        .await??
+    } else {
+        Vec::new()
+    };
 
-    // Delete from DB
+    // Remove hardlinks/files from the Plex library and their companion files.
+    let plex_scan_dirs = remove_plex_files(&plex_paths).await;
+
+    // Delete torrent row from DB
     let pool = state.db.clone();
     tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
@@ -734,9 +753,67 @@ async fn delete_torrent_endpoint(
     })
     .await??;
 
-    info!(torrent_id, title = torrent.title, "torrent deleted");
+    // Trigger Plex scan on affected directories so the library updates.
+    if !plex_scan_dirs.is_empty() {
+        let dirs: Vec<String> = plex_scan_dirs.into_iter().collect();
+        crate::plex::client::scan(&state, &dirs).await;
+    }
+
+    info!(
+        torrent_id,
+        title = torrent.title,
+        delete_files,
+        "torrent deleted"
+    );
 
     Ok(Html(String::new()))
+}
+
+/// Remove video files and their companion files (same stem, different extension)
+/// from the Plex library. Returns the set of parent directories for Plex scan.
+async fn remove_plex_files(video_paths: &[String]) -> std::collections::HashSet<String> {
+    use std::path::Path;
+    let mut scan_dirs = std::collections::HashSet::new();
+
+    for video_path in video_paths {
+        let path = Path::new(video_path);
+        let parent = match path.parent() {
+            Some(p) => p.to_path_buf(),
+            None => continue,
+        };
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+
+        // Remove the video file itself
+        if path.exists()
+            && let Err(e) = std::fs::remove_file(path)
+        {
+            error!(path = %path.display(), error = %e, "failed to remove plex file");
+        }
+
+        // Remove companion files with the same stem (e.g. subtitles, audio tracks)
+        if let Ok(entries) = std::fs::read_dir(&parent) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = match name.to_str() {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if name_str.starts_with(&format!("{stem}."))
+                    && entry.path() != path
+                    && let Err(e) = std::fs::remove_file(entry.path())
+                {
+                    error!(path = %entry.path().display(), error = %e, "failed to remove companion file");
+                }
+            }
+        }
+
+        scan_dirs.insert(parent.to_string_lossy().into_owned());
+    }
+
+    scan_dirs
 }
 
 async fn torrent_progress(
