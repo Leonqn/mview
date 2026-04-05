@@ -34,6 +34,10 @@ struct SeasonWithEpisodes {
     downloading: bool,
     /// Download progress percentage (0-100) for the first active torrent
     download_progress: Option<f64>,
+    /// Year of the media, used as a fallback when no episode info is available
+    media_year: Option<i64>,
+    /// True if the season hasn't aired yet (future air_date or future year)
+    not_aired_yet: bool,
 }
 
 async fn media_detail(
@@ -97,6 +101,7 @@ async fn media_detail(
             })
             .collect();
         let next_episode = episodes.iter().find(|e| !e.downloaded).cloned();
+        let not_aired_yet = compute_not_aired_yet(&episodes, media.year);
         seasons_with_episodes.push(SeasonWithEpisodes {
             season,
             episodes,
@@ -105,6 +110,8 @@ async fn media_detail(
             torrent_progress,
             downloading,
             download_progress,
+            media_year: media.year,
+            not_aired_yet,
         });
     }
     seasons_with_episodes.sort_by(|a, b| b.season.season_number.cmp(&a.season.season_number));
@@ -132,12 +139,35 @@ struct UpdateSeasonStatusForm {
     status: String,
 }
 
+/// Determine whether a season hasn't aired yet.
+/// - If episodes have air_dates, returns true only if NO episode has aired yet.
+/// - If no episodes have air_dates set, falls back to media year > current year.
+/// - If neither info is available, defaults to false (don't hide Search button).
+fn compute_not_aired_yet(episodes: &[crate::db::models::Episode], media_year: Option<i64>) -> bool {
+    use chrono::{Datelike, Local};
+    let today = Local::now().format("%Y-%m-%d").to_string();
+    let with_dates: Vec<_> = episodes
+        .iter()
+        .filter_map(|e| e.air_date.as_deref().filter(|d| !d.is_empty()))
+        .collect();
+    if !with_dates.is_empty() {
+        // True if no episode has aired yet
+        return with_dates.iter().all(|d| *d > today.as_str());
+    }
+    // No air dates — fall back to year comparison
+    if let Some(year) = media_year {
+        let current_year = Local::now().year() as i64;
+        return year > current_year;
+    }
+    false
+}
+
 async fn build_season_entry(
     state: &Arc<AppState>,
     season_id: i64,
 ) -> Result<SeasonWithEpisodes, AppError> {
     let pool = state.db.clone();
-    let (season, episodes, season_torrents) = tokio::task::spawn_blocking(move || {
+    let (season, episodes, season_torrents, media_year) = tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
         let season = queries::get_season(&conn, season_id)?
             .ok_or_else(|| anyhow::anyhow!("season not found"))?;
@@ -147,7 +177,8 @@ async fn build_season_entry(
             .into_iter()
             .filter(|t| t.season_number == Some(season.season_number))
             .collect();
-        Ok::<_, anyhow::Error>((season, episodes, season_torrents))
+        let media_year = queries::get_media(&conn, season.media_id)?.and_then(|m| m.year);
+        Ok::<_, anyhow::Error>((season, episodes, season_torrents, media_year))
     })
     .await??;
 
@@ -176,6 +207,7 @@ async fn build_season_entry(
         .and_then(|h| qbt_progress.get(h))
         .copied();
     let next_episode = episodes.iter().find(|e| !e.downloaded).cloned();
+    let not_aired_yet = compute_not_aired_yet(&episodes, media_year);
     Ok(SeasonWithEpisodes {
         season,
         episodes,
@@ -184,6 +216,8 @@ async fn build_season_entry(
         torrent_progress: qbt_progress,
         downloading,
         download_progress,
+        media_year,
+        not_aired_yet,
     })
 }
 
