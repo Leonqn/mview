@@ -55,13 +55,16 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     .year
                     .map(|y| y <= current_year as i64)
                     .unwrap_or(false);
+                let is_movie = media.media_type == "movie";
                 let aired: Vec<_> = episodes
                     .iter()
                     .filter(|e| {
-                        e.air_date
-                            .as_deref()
-                            .map(|d| d <= today.as_str())
-                            .unwrap_or(media_released)
+                        let date = e.air_date.as_deref().filter(|d| !d.is_empty());
+                        match date {
+                            Some(d) => d <= today.as_str(),
+                            // For movies fall back to year-based release; for series require real air_date
+                            None => is_movie && media_released,
+                        }
                     })
                     .collect();
                 let downloaded = aired.iter().filter(|e| e.downloaded).count();

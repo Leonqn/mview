@@ -5,13 +5,17 @@
 </article>
 {% endfor %}
 {% if results %}
-<div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+<div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap;">
     <button class="outline" onclick="filterResults('all')" id="rf-all" style="margin:0;padding:4px 12px;">All</button>
     <button class="outline secondary" onclick="filterResults('anilist')" id="rf-anilist" style="margin:0;padding:4px 12px;">AniList</button>
     <button class="outline secondary" onclick="filterResults('tmdb')" id="rf-tmdb" style="margin:0;padding:4px 12px;">TMDB</button>
 </div>
+<div id="year-filters" style="display:flex;gap:0.25rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center;">
+    <span style="font-size:0.8em;opacity:0.6;margin-right:4px;">Year:</span>
+    <button class="outline yf-btn yf-active" data-year="all" onclick="filterByYear('all')" style="margin:0;padding:2px 10px;font-size:0.8em;">All</button>
+</div>
 {% for item in results %}
-<article data-source="{{ item.source }}" style="display:flex;gap:0.75rem;align-items:flex-start;padding:0.75rem;">
+<article data-source="{{ item.source }}" data-year="{{ item.year | default(value='') }}" style="display:flex;gap:0.75rem;align-items:flex-start;padding:0.75rem;">
     {% if item.poster_url %}
     <img src="{{ item.poster_url }}" alt="{{ item.title }}" style="width:120px;min-width:120px;border-radius:4px;">
     {% endif %}
@@ -73,13 +77,58 @@
 </article>
 {% endfor %}
 <script>
-function filterResults(src) {
+(function() {
+    const style = document.createElement('style');
+    style.textContent = '.yf-active { background: var(--pico-primary-background) !important; color: var(--pico-primary-inverse) !important; border-color: var(--pico-primary-background) !important; }';
+    document.head.appendChild(style);
+
+    // Populate unique years
+    const years = new Set();
+    document.querySelectorAll('#search-results article[data-year]').forEach(el => {
+        const y = el.dataset.year;
+        if (y) years.add(y);
+    });
+    const container = document.getElementById('year-filters');
+    if (container) {
+        [...years].sort().reverse().forEach(year => {
+            const btn = document.createElement('button');
+            btn.className = 'outline secondary yf-btn';
+            btn.dataset.year = year;
+            btn.textContent = year;
+            btn.onclick = () => filterByYear(year);
+            Object.assign(btn.style, { margin: '0', padding: '2px 10px', fontSize: '0.8em' });
+            container.appendChild(btn);
+        });
+    }
+})();
+
+let currentSource = 'all';
+let currentYear = 'all';
+
+function applyFilters() {
     document.querySelectorAll('#search-results article[data-source]').forEach(el => {
-        el.style.display = (src === 'all' || el.dataset.source === src) ? 'flex' : 'none';
+        const okSrc = currentSource === 'all' || el.dataset.source === currentSource;
+        const okYear = currentYear === 'all' || el.dataset.year === currentYear;
+        el.style.display = (okSrc && okYear) ? 'flex' : 'none';
     });
     document.querySelectorAll('[id^="rf-"]').forEach(btn => {
-        btn.className = btn.id === 'rf-' + src ? 'outline' : 'outline secondary';
+        btn.className = btn.id === 'rf-' + currentSource ? 'outline' : 'outline secondary';
     });
+    document.querySelectorAll('.yf-btn').forEach(btn => {
+        btn.classList.toggle('yf-active', btn.dataset.year === currentYear);
+        if (!btn.classList.contains('yf-active')) btn.className = 'outline secondary yf-btn';
+        else btn.className = 'outline yf-btn yf-active';
+    });
+}
+
+function filterResults(src) {
+    currentSource = src;
+    applyFilters();
+}
+
+function filterByYear(year) {
+    currentYear = year;
+    applyFilters();
 }
 </script>
 {% endif %}

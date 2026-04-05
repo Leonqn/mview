@@ -36,7 +36,14 @@ pub struct AniListMedia {
     pub cover_image: Option<AniListCoverImage>,
     #[serde(rename = "airingSchedule")]
     pub airing_schedule: Option<AniListAiringSchedule>,
+    #[serde(rename = "streamingEpisodes", default)]
+    pub streaming_episodes: Vec<AniListStreamingEpisode>,
     pub relations: Option<AniListRelations>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AniListStreamingEpisode {
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,6 +75,40 @@ impl AniListMedia {
                 .find(|n| n.episode == episode)
                 .map(|n| unix_to_date(n.airing_at))
         })
+    }
+
+    /// Parse streaming_episodes titles like "Episode 0 - Prologue" into (number, title) pairs.
+    /// Returns a raw sorted Vec of (episode_number, title) — NO renormalization applied.
+    /// Callers that know the sequel chain offset should apply it themselves via
+    /// `streaming_episodes_for_season`.
+    pub fn parsed_streaming_episodes_raw(&self) -> Vec<(i64, String)> {
+        let mut result = Vec::new();
+        for ep in &self.streaming_episodes {
+            let raw = match ep.title.as_deref() {
+                Some(t) => t.trim(),
+                None => continue,
+            };
+            // Expected format: "Episode N - Title" or "Episode N"
+            let lower = raw.to_lowercase();
+            if let Some(rest) = lower.strip_prefix("episode ") {
+                let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if num_str.is_empty() {
+                    continue;
+                }
+                let num: i64 = match num_str.parse() {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
+                // Extract title after " - " (preserving original case)
+                let title = raw
+                    .split_once('-')
+                    .map(|(_, t)| t.trim().to_string())
+                    .unwrap_or_default();
+                result.push((num, title));
+            }
+        }
+        result.sort_by_key(|(n, _)| *n);
+        result
     }
 }
 
@@ -308,6 +349,7 @@ mod tests {
                 large: Some("https://example.com/cover.jpg".into()),
             }),
             airing_schedule: None,
+            streaming_episodes: Vec::new(),
             relations: None,
         };
 
@@ -339,11 +381,57 @@ mod tests {
             description: None,
             cover_image: None,
             airing_schedule: None,
+            streaming_episodes: Vec::new(),
             relations: None,
         };
 
         let item = AniListSearchItem::from_media(&media);
         assert_eq!(item.title, "Romaji Title");
+    }
+
+    #[test]
+    fn test_parsed_streaming_episodes() {
+        let media = AniListMedia {
+            id: 1,
+            title: AniListTitle {
+                romaji: None,
+                english: None,
+                native: None,
+            },
+            episodes: Some(13),
+            season_year: None,
+            format: None,
+            status: None,
+            description: None,
+            cover_image: None,
+            airing_schedule: None,
+            streaming_episodes: vec![
+                AniListStreamingEpisode {
+                    title: Some("Episode 0 - Prologue".into()),
+                },
+                AniListStreamingEpisode {
+                    title: Some("Episode 1 - Winter Days, A Fateful Night".into()),
+                },
+                AniListStreamingEpisode {
+                    title: Some("Episode 2 - The Curtain Goes Up".into()),
+                },
+                AniListStreamingEpisode {
+                    title: Some("Episode 13".into()),
+                },
+                AniListStreamingEpisode { title: None },
+                AniListStreamingEpisode {
+                    title: Some("something unrelated".into()),
+                },
+            ],
+            relations: None,
+        };
+
+        let parsed = media.parsed_streaming_episodes_raw();
+        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed[0], (0, "Prologue".to_string()));
+        assert_eq!(parsed[1], (1, "Winter Days, A Fateful Night".to_string()));
+        assert_eq!(parsed[2], (2, "The Curtain Goes Up".to_string()));
+        assert_eq!(parsed[3], (13, "".to_string()));
     }
 
     #[test]

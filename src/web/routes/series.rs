@@ -368,56 +368,54 @@ async fn search_season(
     .await??;
 
     let sq = crate::search::build_queries(&media, &season, tv_season_number);
-    let (search_queries, fallback_queries): (Vec<String>, Vec<String>) =
-        { (sq.primary, sq.fallback) };
 
     info!(
         season_id,
         media_type = media.media_type,
-        queries = ?search_queries,
+        primary = ?sq.primary,
+        fallback = ?sq.fallback,
+        broad_fallback = ?sq.broad_fallback,
         "searching season torrents"
     );
 
-    // Execute primary queries concurrently, tracking which query each result came from
     let mut all_results: Vec<(usize, SearchResult)> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    let mut base_idx: usize = 0;
 
-    let futures: Vec<_> = search_queries
-        .iter()
-        .map(|q| state.rutracker.search(q))
-        .collect();
-
-    let results = futures::future::join_all(futures).await;
-    for (query_idx, result) in results.into_iter().enumerate() {
-        match result {
-            Ok(r) => all_results.extend(r.into_iter().map(|sr| (query_idx, sr))),
-            Err(error) => {
-                tracing::warn!(?error, "rutracker season search failed");
-                errors.push(format!("search failed: {error}"));
-            }
+    // Try each tier in order, stopping when one returns results.
+    for (tier_name, queries) in [
+        ("primary", &sq.primary),
+        ("fallback", &sq.fallback),
+        ("broad_fallback", &sq.broad_fallback),
+    ] {
+        if queries.is_empty() {
+            continue;
         }
-    }
-
-    // If primary queries returned nothing, try fallback (broader) queries
-    if all_results.is_empty() && !fallback_queries.is_empty() {
-        info!(queries = ?fallback_queries, "primary search empty, trying fallback queries");
-
-        let base_idx = search_queries.len();
-        let futures: Vec<_> = fallback_queries
-            .iter()
-            .map(|q| state.rutracker.search(q))
-            .collect();
-
+        if !all_results.is_empty() {
+            break;
+        }
+        if base_idx > 0 {
+            info!(tier = tier_name, queries = ?queries, "previous tier empty, trying next");
+        }
+        let futures: Vec<_> = queries.iter().map(|q| state.rutracker.search(q)).collect();
         let results = futures::future::join_all(futures).await;
         for (query_idx, result) in results.into_iter().enumerate() {
+            let query_str = &queries[query_idx];
             match result {
-                Ok(r) => all_results.extend(r.into_iter().map(|sr| (base_idx + query_idx, sr))),
+                Ok(r) => {
+                    // Rutracker ignores `-` in search terms (treats it as word separator
+                    // or "exclude" operator). If our query had a "TV-N" / "ТВ-N" marker,
+                    // post-filter results to drop those with a conflicting marker.
+                    let filtered = filter_conflicting_season_markers(r, query_str);
+                    all_results.extend(filtered.into_iter().map(|sr| (base_idx + query_idx, sr)));
+                }
                 Err(error) => {
-                    tracing::warn!(?error, "rutracker fallback search failed");
+                    tracing::warn!(tier = tier_name, ?error, "rutracker search failed");
                     errors.push(format!("search failed: {error}"));
                 }
             }
         }
+        base_idx += queries.len();
     }
 
     // Deduplicate by topic_id, keeping the first (lowest query index) occurrence
@@ -441,6 +439,33 @@ async fn search_season(
     Ok(Html(html))
 }
 
+/// Extract a "TV-N" or "ТВ-N" marker from a string, returning the number.
+/// Case-insensitive, supports optional space/dash between "TV" and the number.
+fn extract_season_marker(s: &str) -> Option<i64> {
+    use std::sync::LazyLock;
+    static RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(?i)\b(?:TV|ТВ)[-\s]?(\d+)").unwrap());
+    RE.captures(s)
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse::<i64>().ok())
+}
+
+/// Drop rutracker results that mention a different TV-N / ТВ-N marker than the query.
+/// If the query has no season marker, all results pass through.
+fn filter_conflicting_season_markers(results: Vec<SearchResult>, query: &str) -> Vec<SearchResult> {
+    let expected = match extract_season_marker(query) {
+        Some(n) => n,
+        None => return results,
+    };
+    results
+        .into_iter()
+        .filter(|r| match extract_season_marker(&r.title) {
+            Some(n) => n == expected,
+            None => true, // no marker in title → keep
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,6 +476,47 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    #[test]
+    fn test_extract_season_marker() {
+        assert_eq!(extract_season_marker("Fate UBW TV-1 [BDRip]"), Some(1));
+        assert_eq!(extract_season_marker("Fate UBW ТВ-2 [BDRip]"), Some(2));
+        assert_eq!(extract_season_marker("Show tv-3 rip"), Some(3));
+        assert_eq!(extract_season_marker("Show TV 3 rip"), Some(3));
+        assert_eq!(extract_season_marker("Something Else"), None);
+        assert_eq!(extract_season_marker("Show [1080p]"), None);
+    }
+
+    #[test]
+    fn test_filter_conflicting_season_markers() {
+        let make = |title: &str| SearchResult {
+            topic_id: "1".to_string(),
+            title: title.to_string(),
+            size: "1 GB".to_string(),
+            size_bytes: 1_000_000_000,
+            seeders: 10,
+            leechers: 1,
+            forum_name: "Anime".to_string(),
+            url: "http://example.com".to_string(),
+        };
+
+        let results = vec![
+            make("Fate UBW ТВ-1 [BDRip]"),
+            make("Fate UBW ТВ-2 [BDRip]"),
+            make("Fate UBW TV-1 [BDRip]"),
+            make("Fate UBW [BDRip]"), // no marker
+        ];
+
+        let filtered = filter_conflicting_season_markers(results, "Fate UBW TV-1");
+        assert_eq!(filtered.len(), 3);
+        // ТВ-2 is dropped
+        assert!(!filtered.iter().any(|r| r.title.contains("ТВ-2")));
+
+        // No marker in query → all results pass
+        let all = vec![make("Any title"), make("Another TV-5")];
+        let filtered = filter_conflicting_season_markers(all, "Fate UBW");
+        assert_eq!(filtered.len(), 2);
+    }
 
     fn test_config() -> Config {
         let toml_str = r#"

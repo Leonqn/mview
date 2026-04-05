@@ -254,9 +254,10 @@ pub fn check_and_complete_season(conn: &Connection, season_id: i64) -> Result<bo
     let today: String = conn.query_row("SELECT date('now')", [], |row| row.get(0))?;
     let all_aired = episodes.iter().all(|ep| {
         ep.air_date
-            .as_ref()
-            .map(|d| d.as_str() <= today.as_str())
-            .unwrap_or(false)
+            .as_deref()
+            .filter(|d| !d.is_empty())
+            .map(|d| d <= today.as_str())
+            .unwrap_or(true)
     });
 
     if all_aired {

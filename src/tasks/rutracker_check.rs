@@ -75,6 +75,42 @@ async fn check_single_torrent(
 ) -> Result<()> {
     let topic_id = &torrent.rutracker_topic_id;
 
+    // If the torrent's season is already (or just became) completed, disable
+    // auto_update and skip the network call — nothing will change on rutracker.
+    let torrent_id = torrent.id;
+    let media_id = torrent.media_id;
+    let season_number = torrent.season_number;
+    let pool = state.db.clone();
+    let skip = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        let Some(sn) = season_number else {
+            return Ok::<bool, anyhow::Error>(false);
+        };
+        let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+        let Some(season) = seasons.iter().find(|s| s.season_number == sn) else {
+            return Ok(false);
+        };
+        queries::check_and_complete_season(&conn, season.id)?;
+        let refreshed = queries::get_seasons_for_media(&conn, media_id)?;
+        let is_completed = refreshed
+            .iter()
+            .find(|s| s.season_number == sn)
+            .map(|s| s.status == "completed")
+            .unwrap_or(false);
+        if is_completed {
+            queries::update_torrent_auto_update(&conn, torrent_id, false)?;
+        }
+        Ok(is_completed)
+    })
+    .await??;
+    if skip {
+        debug!(
+            title = torrent.title,
+            topic_id, "season already completed, auto_update disabled"
+        );
+        return Ok(());
+    }
+
     // Fetch current topic info from RuTracker
     let topic_info = state.rutracker.parse_topic(topic_id).await?;
 

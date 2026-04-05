@@ -306,6 +306,7 @@ async fn organize_movie_files(
 ) -> Result<()> {
     let movies_dir = &state.config.paths.movies_dir;
 
+    let mut first_dest: Option<PathBuf> = None;
     for file in video_files {
         let safe_name = sanitize_path(&file.name);
         let source = Path::new(save_path).join(&safe_name);
@@ -324,6 +325,30 @@ async fn organize_movie_files(
 
         // Organize companion files for this movie
         organize_companions(companion_files, &dest, save_path).await?;
+
+        if first_dest.is_none() {
+            first_dest = Some(dest);
+        }
+    }
+
+    // Mark the placeholder episode as downloaded (movies have one episode as a stub)
+    if let Some(dest) = first_dest {
+        let media_id = media.id;
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+            if let Some(season) = seasons.first() {
+                let episodes = queries::get_episodes_for_season(&conn, season.id)?;
+                if let Some(ep) = episodes.first() {
+                    let dest_str = dest.to_string_lossy().to_string();
+                    queries::update_episode_downloaded(&conn, ep.id, true, Some(&dest_str))?;
+                    queries::check_and_complete_season(&conn, season.id)?;
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await??;
     }
 
     Ok(())
@@ -372,11 +397,26 @@ async fn organize_series_files(
     let mut sorted_files: Vec<_> = video_files.to_vec();
     sorted_files.sort_by_key(|f| extract_episode_number(&f.name).unwrap_or(i64::MAX));
 
-    for (idx, file) in sorted_files.iter().enumerate() {
-        let episode_number = extract_episode_number(&file.name).unwrap_or((idx as i64) + 1);
+    // Episodes sorted by episode_number for positional matching
+    let mut sorted_episodes: Vec<_> = episodes.iter().collect();
+    sorted_episodes.sort_by_key(|e| e.episode_number);
 
-        // Try to find matching episode in DB
-        let episode = episodes.iter().find(|e| e.episode_number == episode_number);
+    // If file count matches episode count, map by position. This handles cases like
+    // Beatrice-Raws where files 00-12 correspond to DB episodes 1-13.
+    let use_positional_mapping = !sorted_episodes.is_empty()
+        && sorted_files.len() == sorted_episodes.len()
+        && sorted_files
+            .iter()
+            .all(|f| extract_episode_number(&f.name).is_some());
+
+    for (idx, file) in sorted_files.iter().enumerate() {
+        let (episode_number, episode) = if use_positional_mapping {
+            let ep = sorted_episodes[idx];
+            (ep.episode_number, Some(ep))
+        } else {
+            let num = extract_episode_number(&file.name).unwrap_or((idx as i64) + 1);
+            (num, episodes.iter().find(|e| e.episode_number == num))
+        };
 
         let episode_title = episode.and_then(|e| e.title.as_deref());
 

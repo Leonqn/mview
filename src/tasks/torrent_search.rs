@@ -65,11 +65,13 @@ async fn search_missing_torrents(state: &Arc<AppState>) -> Result<()> {
                     .year
                     .map(|y| y <= current_year as i64)
                     .unwrap_or(false);
+                let is_movie = media.media_type == "movie";
                 let has_aired = episodes.iter().any(|e| {
-                    e.air_date
-                        .as_deref()
-                        .map(|d| d <= today.as_str())
-                        .unwrap_or(media_released)
+                    let date = e.air_date.as_deref().filter(|d| !d.is_empty());
+                    match date {
+                        Some(d) => d <= today.as_str(),
+                        None => is_movie && media_released,
+                    }
                 });
                 if !has_aired {
                     continue;

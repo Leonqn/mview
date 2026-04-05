@@ -38,6 +38,12 @@ query ($id: Int!) {
         airingSchedule(perPage: 50) {
             nodes { episode airingAt }
         }
+        streamingEpisodes {
+            title
+            thumbnail
+            url
+            site
+        }
         relations {
             edges {
                 relationType
@@ -240,6 +246,7 @@ mod tests {
             description: None,
             cover_image: None,
             airing_schedule: None,
+            streaming_episodes: Vec::new(),
             relations,
         }
     }
@@ -272,6 +279,7 @@ mod tests {
             description: None,
             cover_image: None,
             airing_schedule: None,
+            streaming_episodes: Vec::new(),
             relations: Some(AniListRelations {
                 edges: vec![AniListRelationEdge {
                     relation_type: "SEQUEL".to_string(),
@@ -301,6 +309,7 @@ mod tests {
             description: None,
             cover_image: None,
             airing_schedule: None,
+            streaming_episodes: Vec::new(),
             relations: Some(AniListRelations {
                 edges: vec![AniListRelationEdge {
                     relation_type: "SEQUEL".to_string(),
@@ -330,6 +339,7 @@ mod tests {
             description: None,
             cover_image: None,
             airing_schedule: None,
+            streaming_episodes: Vec::new(),
             relations: Some(AniListRelations {
                 edges: vec![AniListRelationEdge {
                     relation_type: "PREQUEL".to_string(),

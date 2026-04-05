@@ -90,7 +90,7 @@ async fn check_single_anime(state: &Arc<AppState>, media: &crate::db::models::Me
 
     let mut season_num = next_season_number;
 
-    for entry in &chain {
+    for (idx, entry) in chain.iter().enumerate() {
         if db_anilist_ids.contains(&entry.id) {
             continue;
         }
@@ -113,17 +113,37 @@ async fn check_single_anime(state: &Arc<AppState>, media: &crate::db::models::Me
             created_at: String::new(),
         };
 
-        let episodes: Vec<Episode> = (1..=entry.episodes.unwrap_or(0))
-            .map(|ep_num| Episode {
-                id: 0,
-                season_id: 0,
-                episode_number: ep_num,
-                title: None,
-                air_date: entry.episode_air_date(ep_num),
-                downloaded: false,
-                file_path: None,
-            })
-            .collect();
+        let streaming = crate::web::routes::api::streaming_episodes_for_season_public(&chain, idx);
+        let episodes: Vec<Episode> = if !streaming.is_empty() {
+            streaming
+                .iter()
+                .map(|(ep_num, ep_title)| Episode {
+                    id: 0,
+                    season_id: 0,
+                    episode_number: *ep_num,
+                    title: if ep_title.is_empty() {
+                        None
+                    } else {
+                        Some(ep_title.clone())
+                    },
+                    air_date: entry.episode_air_date(*ep_num),
+                    downloaded: false,
+                    file_path: None,
+                })
+                .collect()
+        } else {
+            (1..=entry.episodes.unwrap_or(0))
+                .map(|ep_num| Episode {
+                    id: 0,
+                    season_id: 0,
+                    episode_number: ep_num,
+                    title: None,
+                    air_date: entry.episode_air_date(ep_num),
+                    downloaded: false,
+                    file_path: None,
+                })
+                .collect()
+        };
 
         let pool = state.db.clone();
         let mid = media.id;

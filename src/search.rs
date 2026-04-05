@@ -3,16 +3,22 @@ use std::sync::LazyLock;
 
 use crate::db::models::{Media, Season};
 
-/// Search queries split into primary (precise) and fallback (broad).
+/// Search queries in tiers of precision.
+/// - `primary`: most precise (narrow, with year if available)
+/// - `fallback`: narrow without year
+/// - `broad_fallback`: title-only, broad (for manual search)
 pub struct SearchQueries {
     pub primary: Vec<String>,
     pub fallback: Vec<String>,
+    pub broad_fallback: Vec<String>,
 }
 
 /// Build search queries for a season based on media type.
 ///
 /// `tv_season_number` is the TV-only season index (skipping movies/OVA formats).
 pub fn build_queries(media: &Media, season: &Season, tv_season_number: i64) -> SearchQueries {
+    let year = media.year;
+
     let search_name = media
         .title_original
         .as_deref()
@@ -22,48 +28,72 @@ pub fn build_queries(media: &Media, season: &Season, tv_season_number: i64) -> S
     let season_name = season.title.as_deref().unwrap_or(search_name);
     let fmt = season.format.as_deref().unwrap_or("");
 
+    // If year is known: primary = with year, fallback = without year.
+    // If no year: primary = without year, fallback = empty.
+    let layer = |narrow: Vec<String>| -> (Vec<String>, Vec<String>) {
+        if let Some(y) = year {
+            let with_year: Vec<String> = narrow.iter().map(|q| format!("{} {}", q, y)).collect();
+            (with_year, narrow)
+        } else {
+            (narrow, vec![])
+        }
+    };
+
     if media.media_type == "movie" || fmt == "MOVIE" || fmt == "OVA" || fmt == "SPECIAL" {
+        let (primary, fallback) = layer(vec![season_name.to_string()]);
         SearchQueries {
-            primary: vec![season_name.to_string()],
-            fallback: vec![],
+            primary,
+            fallback,
+            broad_fallback: vec![],
         }
     } else if media.media_type == "anime" && season.anilist_id.is_some() {
         let (base_title, season_num) = parse_anime_season_title(season_name);
-        let primary = vec![
+        let narrow = vec![
             format!("{} TV-{}", base_title, season_num),
             format!("{} ТВ-{}", base_title, season_num),
         ];
-        let mut fallback = Vec::new();
+        let (primary, fallback) = layer(narrow);
+        let mut broad = Vec::new();
         if base_title != season_name {
-            fallback.push(season_name.to_string());
+            broad.push(season_name.to_string());
         }
-        fallback.push(base_title.to_string());
-        SearchQueries { primary, fallback }
+        broad.push(base_title.to_string());
+        SearchQueries {
+            primary,
+            fallback,
+            broad_fallback: broad,
+        }
     } else if media.media_type == "anime" {
-        let primary = vec![
+        let narrow = vec![
             format!("{} TV-{}", search_name, tv_season_number),
             format!("{} ТВ-{}", search_name, tv_season_number),
         ];
-        let mut fallback = Vec::new();
+        let (primary, fallback) = layer(narrow);
+        let mut broad = Vec::new();
         if !is_generic_season_name(season_name) && season_name != search_name {
-            fallback.push(season_name.to_string());
+            broad.push(season_name.to_string());
         }
-        fallback.push(search_name.to_string());
-        SearchQueries { primary, fallback }
+        broad.push(search_name.to_string());
+        SearchQueries {
+            primary,
+            fallback,
+            broad_fallback: broad,
+        }
     } else {
-        let mut primary = vec![
+        let mut narrow = vec![
             format!("{} Season {}", search_name, season.season_number),
             format!("{} Сезон {}", search_name, season.season_number),
             format!("{} TV-{}", search_name, season.season_number),
             format!("{} ТВ-{}", search_name, season.season_number),
         ];
         if season_name != search_name && !is_generic_season_name(season_name) {
-            primary.push(season_name.to_string());
+            narrow.push(season_name.to_string());
         }
-        primary.push(search_name.to_string());
+        let (primary, fallback) = layer(narrow);
         SearchQueries {
             primary,
-            fallback: vec![],
+            fallback,
+            broad_fallback: vec![search_name.to_string()],
         }
     }
 }

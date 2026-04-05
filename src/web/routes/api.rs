@@ -461,6 +461,78 @@ async fn track_series_with_type(
     Ok(media_id)
 }
 
+/// Slice cumulative streamingEpisodes for a specific chain entry.
+///
+/// AniList often returns cumulative numbering in streamingEpisodes (e.g. UBW TV-2 entry
+/// returns episodes 1..26 or 14..26 — both represent the whole franchise). We compute the
+/// expected range `[offset, offset + episode_count]` and take only those, then renormalize
+/// them back to start from 1 (keeping episode 0 if it falls in range).
+pub fn streaming_episodes_for_season_public(
+    chain: &[crate::anilist::models::AniListMedia],
+    idx: usize,
+) -> Vec<(i64, String)> {
+    streaming_episodes_for_season(chain, idx)
+}
+
+fn streaming_episodes_for_season(
+    chain: &[crate::anilist::models::AniListMedia],
+    idx: usize,
+) -> Vec<(i64, String)> {
+    let entry = &chain[idx];
+    let raw = entry.parsed_streaming_episodes_raw();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
+    let ep_count = match entry.episodes {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+
+    // Detect "combined" list: AniList bundles multiple seasons' episodes into one
+    // streamingEpisodes list shared between sibling entries (e.g. UBW TV-1 and TV-2
+    // both get 26 items for 2×13 eps). Heuristic: raw_count >= 2 * ep_count.
+    let raw_count = raw.len() as i64;
+    let is_combined = raw_count >= 2 * ep_count;
+
+    if is_combined {
+        // Find this entry's position among chain siblings sharing the same raw list length.
+        let my_raw_count = raw.len();
+        let position: i64 = chain[..idx]
+            .iter()
+            .filter(|m| m.parsed_streaming_episodes_raw().len() == my_raw_count)
+            .count() as i64;
+
+        // Take the ep_count-sized slice for this position.
+        let start = position * ep_count;
+        let end = start + ep_count;
+
+        raw.into_iter()
+            .filter(|(n, _)| *n >= start && *n < end)
+            .map(|(n, title)| {
+                // First segment: keep 0-indexed (preserves prologue as ep 0).
+                // Later segments: shift to 1-indexed.
+                let new_num = if position == 0 {
+                    n - start
+                } else {
+                    n - start + 1
+                };
+                (new_num, title)
+            })
+            .collect()
+    } else {
+        // Per-season list: only trust titles if count matches this season's ep_count.
+        // Otherwise AniList is reusing a sibling's titles (e.g. JJK S2 returns S1's
+        // 24 titles for its own 23 episodes).
+        if raw_count != ep_count {
+            return Vec::new();
+        }
+        raw.into_iter()
+            .filter(|(n, _)| *n >= 0 && *n <= ep_count)
+            .collect()
+    }
+}
+
 fn build_anime_season_data(
     chain: &[crate::anilist::models::AniListMedia],
 ) -> Vec<(Season, Vec<Episode>)> {
@@ -496,17 +568,55 @@ fn build_anime_season_data(
                 created_at: String::new(),
             };
 
-            let episodes: Vec<Episode> = (1..=episode_count.unwrap_or(0))
-                .map(|ep_num| Episode {
-                    id: 0,
-                    season_id: 0,
-                    episode_number: ep_num,
-                    title: None,
-                    air_date: entry.episode_air_date(ep_num),
-                    downloaded: false,
-                    file_path: None,
-                })
-                .collect();
+            // Prefer AniList's streamingEpisodes (gives real titles + episode 0 when present).
+            // Cumulative numbering across sequel seasons is handled by subtracting
+            // the chain offset and keeping only this entry's episodes.
+            let streaming = streaming_episodes_for_season(chain, idx);
+            let raw = entry.parsed_streaming_episodes_raw();
+            let min_n = raw.iter().map(|(n, _)| *n).min().unwrap_or(-1);
+            let max_n = raw.iter().map(|(n, _)| *n).max().unwrap_or(-1);
+            let offset: i64 = chain[..idx].iter().filter_map(|m| m.episodes).sum();
+            tracing::info!(
+                anilist_id = entry.id,
+                chain_idx = idx,
+                ep_count = entry.episodes,
+                offset,
+                raw_count = raw.len(),
+                raw_min = min_n,
+                raw_max = max_n,
+                filtered_count = streaming.len(),
+                "building episodes for anime season"
+            );
+            let episodes: Vec<Episode> = if !streaming.is_empty() {
+                streaming
+                    .iter()
+                    .map(|(ep_num, ep_title)| Episode {
+                        id: 0,
+                        season_id: 0,
+                        episode_number: *ep_num,
+                        title: if ep_title.is_empty() {
+                            None
+                        } else {
+                            Some(ep_title.clone())
+                        },
+                        air_date: entry.episode_air_date(*ep_num),
+                        downloaded: false,
+                        file_path: None,
+                    })
+                    .collect()
+            } else {
+                (1..=episode_count.unwrap_or(0))
+                    .map(|ep_num| Episode {
+                        id: 0,
+                        season_id: 0,
+                        episode_number: ep_num,
+                        title: None,
+                        air_date: entry.episode_air_date(ep_num),
+                        downloaded: false,
+                        file_path: None,
+                    })
+                    .collect()
+            };
 
             (season, episodes)
         })
@@ -1039,6 +1149,137 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    #[test]
+    fn test_streaming_episodes_for_season_combined() {
+        use crate::anilist::models::{AniListMedia, AniListStreamingEpisode, AniListTitle};
+
+        // UBW case: AniList returns 26 items (0..=25) for 2 seasons × 13 eps,
+        // shared between both sibling entries.
+        let make_entry = |id: i64| AniListMedia {
+            id,
+            title: AniListTitle {
+                romaji: None,
+                english: None,
+                native: None,
+            },
+            episodes: Some(13),
+            season_year: None,
+            format: None,
+            status: None,
+            description: None,
+            cover_image: None,
+            airing_schedule: None,
+            streaming_episodes: (0..=25)
+                .map(|n| AniListStreamingEpisode {
+                    title: Some(format!("Episode {n} - Title {n}")),
+                })
+                .collect(),
+            relations: None,
+        };
+
+        let chain = vec![make_entry(1), make_entry(2)];
+
+        // S1 (position=0): items 0..=12 → 13 items, 0-indexed (preserves prologue as ep 0)
+        let s1 = streaming_episodes_for_season(&chain, 0);
+        assert_eq!(s1.len(), 13);
+        assert_eq!(s1[0], (0, "Title 0".to_string()));
+        assert_eq!(s1[12], (12, "Title 12".to_string()));
+
+        // S2 (position=1): items 13..=25 → 13 items, renormalized to 1-indexed
+        let s2 = streaming_episodes_for_season(&chain, 1);
+        assert_eq!(s2.len(), 13);
+        assert_eq!(s2[0], (1, "Title 13".to_string()));
+        assert_eq!(s2[12], (13, "Title 25".to_string()));
+    }
+
+    #[test]
+    fn test_streaming_episodes_jjk_scenario() {
+        use crate::anilist::models::{AniListMedia, AniListStreamingEpisode, AniListTitle};
+
+        // JJK reality: ALL entries return same 24 streaming episodes (S1's).
+        // Movie has 1 ep, S1 has 24, S2 has 23.
+        let make_entry = |id: i64, ep_count: i64, raw_count: i64| AniListMedia {
+            id,
+            title: AniListTitle {
+                romaji: None,
+                english: None,
+                native: None,
+            },
+            episodes: Some(ep_count),
+            season_year: None,
+            format: None,
+            status: None,
+            description: None,
+            cover_image: None,
+            airing_schedule: None,
+            streaming_episodes: (1..=raw_count)
+                .map(|n| AniListStreamingEpisode {
+                    title: Some(format!("Episode {n} - Title {n}")),
+                })
+                .collect(),
+            relations: None,
+        };
+
+        let chain = vec![
+            make_entry(131573, 1, 24),  // JJK 0 movie
+            make_entry(113415, 24, 24), // JJK S1
+            make_entry(145064, 23, 24), // JJK S2
+        ];
+
+        let s0 = streaming_episodes_for_season(&chain, 0);
+        let s1 = streaming_episodes_for_season(&chain, 1);
+        let s2 = streaming_episodes_for_season(&chain, 2);
+
+        eprintln!("JJK 0 movie: {} items", s0.len());
+        eprintln!("JJK S1: {} items, first: {:?}", s1.len(), s1.first());
+        eprintln!("JJK S2: {} items, first: {:?}", s2.len(), s2.first());
+
+        assert_eq!(s1.len(), 24, "S1 should have 24 episodes");
+        assert!(s1[0].1.starts_with("Title"), "S1 should have titles");
+    }
+
+    #[test]
+    fn test_streaming_episodes_for_season_per_season() {
+        use crate::anilist::models::{AniListMedia, AniListStreamingEpisode, AniListTitle};
+
+        // Fate/Zero case: each entry has its own per-season list 1..=N.
+        let make_entry = |id: i64, max: i64| AniListMedia {
+            id,
+            title: AniListTitle {
+                romaji: None,
+                english: None,
+                native: None,
+            },
+            episodes: Some(max),
+            season_year: None,
+            format: None,
+            status: None,
+            description: None,
+            cover_image: None,
+            airing_schedule: None,
+            streaming_episodes: (1..=max)
+                .map(|n| AniListStreamingEpisode {
+                    title: Some(format!("Episode {n} - S{id}E{n}")),
+                })
+                .collect(),
+            relations: None,
+        };
+
+        let chain = vec![make_entry(1, 13), make_entry(2, 12)];
+
+        // S1: 13 items for 13 eps, not combined (13 < 2*13), use as-is
+        let s1 = streaming_episodes_for_season(&chain, 0);
+        assert_eq!(s1.len(), 13);
+        assert_eq!(s1[0].1, "S1E1");
+        assert_eq!(s1[12].1, "S1E13");
+
+        // S2: 12 items for 12 eps, not combined, use as-is (titles from this entry)
+        let s2 = streaming_episodes_for_season(&chain, 1);
+        assert_eq!(s2.len(), 12);
+        assert_eq!(s2[0].1, "S2E1");
+        assert_eq!(s2[11].1, "S2E12");
+    }
 
     fn test_config() -> Config {
         let toml_str = r#"
