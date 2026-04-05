@@ -10,12 +10,18 @@
     <button class="outline secondary" onclick="filterResults('anilist')" id="rf-anilist" style="margin:0;padding:4px 12px;">AniList</button>
     <button class="outline secondary" onclick="filterResults('tmdb')" id="rf-tmdb" style="margin:0;padding:4px 12px;">TMDB</button>
 </div>
+<div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap;">
+    <button class="outline" onclick="filterByType('all')" id="mt-all" style="margin:0;padding:4px 12px;">All Types</button>
+    <button class="outline secondary" onclick="filterByType('movie')" id="mt-movie" style="margin:0;padding:4px 12px;">Movies</button>
+    <button class="outline secondary" onclick="filterByType('series')" id="mt-series" style="margin:0;padding:4px 12px;">Series</button>
+    <button class="outline secondary" onclick="filterByType('anime')" id="mt-anime" style="margin:0;padding:4px 12px;">Anime</button>
+</div>
 <div id="year-filters" style="display:flex;gap:0.25rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center;">
     <span style="font-size:0.8em;opacity:0.6;margin-right:4px;">Year:</span>
     <button class="outline yf-btn yf-active" data-year="all" onclick="filterByYear('all')" style="margin:0;padding:2px 10px;font-size:0.8em;">All</button>
 </div>
 {% for item in results %}
-<article data-source="{{ item.source }}" data-year="{{ item.year | default(value='') }}" style="display:flex;gap:0.75rem;align-items:flex-start;padding:0.75rem;">
+<article data-source="{{ item.source }}" data-year="{{ item.year | default(value='') }}" data-media-type="{{ item.media_type }}" style="display:flex;gap:0.75rem;align-items:flex-start;padding:0.75rem;">
     {% if item.poster_url %}
     <img src="{{ item.poster_url }}" alt="{{ item.title }}" style="width:120px;min-width:120px;border-radius:4px;">
     {% endif %}
@@ -104,15 +110,20 @@
 
 let currentSource = 'all';
 let currentYear = 'all';
+let currentType = 'all';
 
 function applyFilters() {
     document.querySelectorAll('#search-results article[data-source]').forEach(el => {
         const okSrc = currentSource === 'all' || el.dataset.source === currentSource;
         const okYear = currentYear === 'all' || el.dataset.year === currentYear;
-        el.style.display = (okSrc && okYear) ? 'flex' : 'none';
+        const okType = currentType === 'all' || el.dataset.mediaType === currentType;
+        el.style.display = (okSrc && okYear && okType) ? 'flex' : 'none';
     });
     document.querySelectorAll('[id^="rf-"]').forEach(btn => {
         btn.className = btn.id === 'rf-' + currentSource ? 'outline' : 'outline secondary';
+    });
+    document.querySelectorAll('[id^="mt-"]').forEach(btn => {
+        btn.className = btn.id === 'mt-' + currentType ? 'outline' : 'outline secondary';
     });
     document.querySelectorAll('.yf-btn').forEach(btn => {
         btn.classList.toggle('yf-active', btn.dataset.year === currentYear);
@@ -128,6 +139,11 @@ function filterResults(src) {
 
 function filterByYear(year) {
     currentYear = year;
+    applyFilters();
+}
+
+function filterByType(type) {
+    currentType = type;
     applyFilters();
 }
 </script>

@@ -256,6 +256,24 @@ async fn check_single_series(
         }
     };
 
+    // Update existing seasons that may have gained episodes (e.g. season was added
+    // before airing and now has episodes, or new episodes aired mid-season).
+    for tmdb_season in tmdb_seasons.iter().filter(|s| s.season_number > 0) {
+        if let Some(db_season) = db_seasons
+            .iter()
+            .find(|s| s.season_number == tmdb_season.season_number)
+            && let Err(error) =
+                update_existing_series_season(state, media, tmdb_id, db_season, tmdb_season).await
+        {
+            warn!(
+                title = media.title,
+                season = tmdb_season.season_number,
+                ?error,
+                "failed to update existing series season"
+            );
+        }
+    }
+
     // Find new seasons (skip specials, season 0)
     let new_seasons: Vec<_> = tmdb_seasons
         .iter()
@@ -368,6 +386,89 @@ async fn check_single_series(
             "added new season and created notification"
         );
     }
+
+    Ok(())
+}
+
+/// Update an existing series season with latest data from TMDB.
+/// Handles the case where the season was added before airing (no episodes in DB) and
+/// now has episodes, or new episodes have been added mid-season.
+async fn update_existing_series_season(
+    state: &Arc<AppState>,
+    media: &crate::db::models::Media,
+    tmdb_id: i64,
+    db_season: &crate::db::models::Season,
+    tmdb_season: &crate::tmdb::models::TmdbSeasonSummary,
+) -> Result<()> {
+    let Some(new_ep_count) = tmdb_season.episode_count else {
+        return Ok(());
+    };
+
+    // Count existing episodes in DB
+    let season_id = db_season.id;
+    let pool = state.db.clone();
+    let existing_eps = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        queries::get_episodes_for_season(&conn, season_id)
+    })
+    .await??;
+
+    let existing_count = existing_eps.len() as i64;
+    let old_ep_count = db_season.episode_count;
+
+    // Skip if nothing changed: same count, same episodes already present
+    if old_ep_count == Some(new_ep_count) && existing_count >= new_ep_count {
+        return Ok(());
+    }
+
+    info!(
+        title = media.title,
+        season = tmdb_season.season_number,
+        old_count = ?old_ep_count,
+        new_count = new_ep_count,
+        existing = existing_count,
+        "updating existing series season from tmdb"
+    );
+
+    // Fetch fresh episode details from TMDB
+    let season_details = match state
+        .tmdb
+        .get_season(tmdb_id, tmdb_season.season_number)
+        .await
+    {
+        Ok(s) => s,
+        Err(error) => {
+            warn!(?error, "failed to fetch season details from tmdb");
+            return Ok(());
+        }
+    };
+
+    let existing_nums: std::collections::HashSet<i64> =
+        existing_eps.iter().map(|e| e.episode_number).collect();
+
+    let pool = state.db.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        queries::update_season_episode_count(&conn, season_id, Some(new_ep_count))?;
+        if let Some(episodes) = season_details.episodes {
+            for ep in episodes {
+                if !existing_nums.contains(&ep.episode_number) {
+                    let episode = Episode {
+                        id: 0,
+                        season_id,
+                        episode_number: ep.episode_number,
+                        title: ep.name,
+                        air_date: ep.air_date,
+                        downloaded: false,
+                        file_path: None,
+                    };
+                    queries::insert_episode(&conn, &episode)?;
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
 
     Ok(())
 }

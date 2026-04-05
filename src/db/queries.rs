@@ -276,6 +276,19 @@ pub fn update_season_status(conn: &Connection, id: i64, status: &str) -> Result<
     Ok(())
 }
 
+pub fn update_season_episode_count(
+    conn: &Connection,
+    id: i64,
+    episode_count: Option<i64>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE seasons SET episode_count = ?1 WHERE id = ?2",
+        params![episode_count, id],
+    )
+    .with_context(|| "Failed to update season episode_count")?;
+    Ok(())
+}
+
 // --- Episodes ---
 
 pub fn insert_episode(conn: &Connection, episode: &Episode) -> Result<i64> {

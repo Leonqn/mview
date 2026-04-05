@@ -26,8 +26,12 @@ impl RutrackerClient {
     /// Parses the HTML results table and returns structured results.
     pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
         info!(query, "searching rutracker");
+        // Rutracker treats " -" (space-dash) as an exclude operator, which breaks queries
+        // like "Fate/strange Fake -Whispers of Dawn-". Replace dashes with spaces — rutracker
+        // ignores punctuation anyway when matching, so result set is equivalent.
+        let sanitized = sanitize_query(query);
         let url = format!("{}{}", self.base_url(), SEARCH_PATH);
-        let full_url = reqwest::Url::parse_with_params(&url, &[("nm", query)])
+        let full_url = reqwest::Url::parse_with_params(&url, &[("nm", sanitized.as_str())])
             .context("Failed to build search URL")?;
         let html = self
             .get(full_url.as_str())
@@ -37,6 +41,21 @@ impl RutrackerClient {
         info!(query, count = results.len(), "rutracker search completed");
         Ok(results)
     }
+}
+
+/// Replace characters in the query that rutracker treats as search operators.
+/// `-` is treated as "exclude", `+` as "required", `"` as "phrase".
+fn sanitize_query(query: &str) -> String {
+    query
+        .chars()
+        .map(|c| match c {
+            '-' | '+' | '"' => ' ',
+            other => other,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Parse search results HTML from RuTracker's tracker.php page.
@@ -204,6 +223,21 @@ mod tests {
         assert_eq!(extract_topic_id("viewtopic.php?t=12345"), "12345");
         assert_eq!(extract_topic_id("viewtopic.php?t=999&start=0"), "999");
         assert_eq!(extract_topic_id("something_else"), "");
+    }
+
+    #[test]
+    fn test_sanitize_query() {
+        assert_eq!(
+            sanitize_query("Fate/strange Fake -Whispers of Dawn-"),
+            "Fate/strange Fake Whispers of Dawn"
+        );
+        assert_eq!(sanitize_query("Show TV-1 2020"), "Show TV 1 2020");
+        assert_eq!(
+            sanitize_query("\"quoted phrase\" +word"),
+            "quoted phrase word"
+        );
+        assert_eq!(sanitize_query("normal title"), "normal title");
+        assert_eq!(sanitize_query("  spaces   around  "), "spaces around");
     }
 
     #[test]
