@@ -7,19 +7,19 @@
         <span style="font-size:0.8em;opacity:0.6;margin-right:4px;">Tags:</span>
         <button class="outline sr-tag-btn sr-tag-active" data-tag="all" style="margin:0;padding:1px 8px;font-size:0.75em;">All</button>
     </div>
-    <table>
+    <table style="table-layout:fixed;">
         <thead>
             <tr>
-                <th style="min-width:150px;">Title</th>
-                <th style="width:300px;max-width:300px;">Tags</th>
-                <th style="white-space:nowrap;">Size</th>
-                <th>Actions</th>
+                <th style="width:35%;">Title</th>
+                <th style="width:40%;">Tags</th>
+                <th style="white-space:nowrap;width:90px;">Size</th>
+                <th style="width:110px;">Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for r in results %}
             <tr data-tags="{{ r.title | extract_tags | join(',') }}">
-                <td><a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.title }}</a></td>
+                <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><a href="{{ r.url }}" target="_blank" rel="noopener" title="{{ r.title }}">{{ r.title }}</a></td>
                 <td style="max-width:300px;">
                     <div style="display:flex;flex-wrap:wrap;gap:2px;">
                     {% for tag in r.title | extract_tags %}
@@ -100,9 +100,13 @@
 
     filters.querySelector('.sr-tag-btn[data-tag="all"]').addEventListener('click', () => toggle('all'));
 
+    // Pre-populate filter bar with all unique tags from all results
+    const uniqueTags = new Set();
+    root.querySelectorAll('.sr-tag').forEach(el => uniqueTags.add(el.dataset.tag));
+    [...uniqueTags].sort().forEach(tag => ensureBtn(tag));
+
     root.querySelectorAll('.sr-tag').forEach(el => {
         el.addEventListener('click', () => {
-            ensureBtn(el.dataset.tag);
             toggle(el.dataset.tag);
         });
     });

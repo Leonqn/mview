@@ -187,7 +187,7 @@ async fn build_season_entry(
     })
 }
 
-async fn render_season_partial(
+pub async fn render_season_partial(
     state: &Arc<AppState>,
     season_id: i64,
 ) -> Result<Html<String>, AppError> {

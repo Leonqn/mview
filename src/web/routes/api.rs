@@ -766,6 +766,27 @@ async fn delete_torrent_endpoint(
         "torrent deleted"
     );
 
+    // Re-render the season partial so the UI reflects the updated torrent list
+    // and "Downloaded" badge state.
+    if let Some(season_number) = torrent.season_number {
+        let media_id = torrent.media_id;
+        let pool = state.db.clone();
+        let season_id = tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+            Ok::<_, anyhow::Error>(
+                seasons
+                    .iter()
+                    .find(|s| s.season_number == season_number)
+                    .map(|s| s.id),
+            )
+        })
+        .await??;
+        if let Some(sid) = season_id {
+            return crate::web::routes::series::render_season_partial(&state, sid).await;
+        }
+    }
+
     Ok(Html(String::new()))
 }
 

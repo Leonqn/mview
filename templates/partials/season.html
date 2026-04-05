@@ -90,8 +90,8 @@
                         {% endif %}
                         <button
                             hx-post="/api/torrents/{{ torrent.id }}/delete"
-                            hx-target="#torrent-{{ torrent.id }}"
-                            hx-swap="outerHTML"
+                            hx-target="#season-{{ entry.season.id }}"
+                            hx-swap="innerHTML"
                             hx-confirm="Remove from DB + Plex library? Torrent in qBittorrent will keep seeding."
                             class="outline secondary"
                             style="margin:0;padding:1px 8px;font-size:0.8em;"
@@ -99,8 +99,8 @@
                         <button
                             hx-post="/api/torrents/{{ torrent.id }}/delete"
                             hx-vals='{"delete_files":"true"}'
-                            hx-target="#torrent-{{ torrent.id }}"
-                            hx-swap="outerHTML"
+                            hx-target="#season-{{ entry.season.id }}"
+                            hx-swap="innerHTML"
                             hx-confirm="Delete torrent AND remove downloaded files from disk?"
                             class="outline secondary"
                             style="margin:0;padding:1px 8px;font-size:0.8em;"
@@ -109,12 +109,13 @@
                     <span style="color:orange;">Downloading</span>
                     <button
                         hx-post="/api/torrents/{{ torrent.id }}/delete"
-                        hx-target="#torrent-{{ torrent.id }}"
-                        hx-swap="outerHTML"
-                        hx-confirm="Delete torrent and all downloaded files?"
+                        hx-vals='{"delete_files":"true"}'
+                        hx-target="#season-{{ entry.season.id }}"
+                        hx-swap="innerHTML"
+                        hx-confirm="Cancel download and remove files?"
                         class="outline secondary"
                         style="margin:0;padding:1px 8px;font-size:0.8em;"
-                    >Delete</button>
+                    >Cancel</button>
                     {% else %}
                     <span style="opacity:0.5;">—</span>
                     {% endif %}
