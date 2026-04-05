@@ -7,6 +7,58 @@ use super::models::{AniListMedia, AniListRelationNode, GraphQLResponse, MediaDat
 
 const ANILIST_URL: &str = "https://graphql.anilist.co";
 
+const DISCOVER_TRENDING_QUERY: &str = r#"
+query {
+    Page(perPage: 20) {
+        media(type: ANIME, sort: [TRENDING_DESC]) {
+            id
+            title { romaji english native }
+            episodes seasonYear format status description
+            coverImage { large }
+        }
+    }
+}
+"#;
+
+const DISCOVER_POPULAR_QUERY: &str = r#"
+query {
+    Page(perPage: 20) {
+        media(type: ANIME, sort: [POPULARITY_DESC]) {
+            id
+            title { romaji english native }
+            episodes seasonYear format status description
+            coverImage { large }
+        }
+    }
+}
+"#;
+
+const DISCOVER_TOP_RATED_QUERY: &str = r#"
+query {
+    Page(perPage: 20) {
+        media(type: ANIME, sort: [SCORE_DESC], averageScore_greater: 0) {
+            id
+            title { romaji english native }
+            episodes seasonYear format status description
+            coverImage { large }
+        }
+    }
+}
+"#;
+
+const DISCOVER_AIRING_QUERY: &str = r#"
+query {
+    Page(perPage: 20) {
+        media(type: ANIME, status: RELEASING, sort: [POPULARITY_DESC]) {
+            id
+            title { romaji english native }
+            episodes seasonYear format status description
+            coverImage { large }
+        }
+    }
+}
+"#;
+
 const SEARCH_QUERY: &str = r#"
 query ($search: String!) {
     Page(perPage: 10) {
@@ -57,6 +109,14 @@ query ($id: Int!) {
 }
 "#;
 
+#[derive(Debug, Clone, Copy)]
+pub enum DiscoverCategory {
+    Trending,
+    Popular,
+    TopRated,
+    Airing,
+}
+
 pub struct AniListClient {
     client: Client,
 }
@@ -67,6 +127,42 @@ impl AniListClient {
             .build()
             .context("failed to create anilist http client")?;
         Ok(Self { client })
+    }
+
+    pub async fn discover(&self, category: DiscoverCategory) -> Result<Vec<AniListMedia>> {
+        debug!(?category, "anilist discover");
+        let query = match category {
+            DiscoverCategory::Trending => DISCOVER_TRENDING_QUERY,
+            DiscoverCategory::Popular => DISCOVER_POPULAR_QUERY,
+            DiscoverCategory::TopRated => DISCOVER_TOP_RATED_QUERY,
+            DiscoverCategory::Airing => DISCOVER_AIRING_QUERY,
+        };
+        let body = json!({ "query": query });
+
+        let response = self
+            .client
+            .post(ANILIST_URL)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send anilist discover request")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "anilist discover failed: {status} — {text}"
+            ));
+        }
+
+        let resp: GraphQLResponse<SearchData> = response
+            .json()
+            .await
+            .context("failed to parse anilist discover response")?;
+
+        let results = resp.data.page.media;
+        info!(count = results.len(), "anilist discover done");
+        Ok(results)
     }
 
     pub async fn search(&self, query: &str) -> Result<Vec<AniListMedia>> {
@@ -249,6 +345,43 @@ mod tests {
             streaming_episodes: Vec::new(),
             relations,
         }
+    }
+
+    #[test]
+    fn test_parse_discover_response() {
+        // Same response shape as SEARCH_QUERY returns — reuses SearchData.
+        let json = r#"{
+            "data": {
+                "Page": {
+                    "media": [
+                        {
+                            "id": 101922,
+                            "title": { "romaji": "Jujutsu Kaisen", "english": "JUJUTSU KAISEN", "native": "呪術廻戦" },
+                            "episodes": 24,
+                            "seasonYear": 2020,
+                            "format": "TV",
+                            "status": "FINISHED",
+                            "description": "A boy fights curses.",
+                            "coverImage": { "large": "https://example.com/x.jpg" }
+                        },
+                        {
+                            "id": 21,
+                            "title": { "romaji": "One Piece", "english": null, "native": null },
+                            "episodes": null,
+                            "seasonYear": 1999,
+                            "format": "TV",
+                            "status": "RELEASING",
+                            "description": null,
+                            "coverImage": null
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let resp: GraphQLResponse<SearchData> = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.page.media.len(), 2);
+        assert_eq!(resp.data.page.media[0].id, 101922);
+        assert_eq!(resp.data.page.media[1].status.as_deref(), Some("RELEASING"));
     }
 
     #[test]

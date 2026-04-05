@@ -56,6 +56,91 @@ impl TmdbClient {
         Ok(data.results)
     }
 
+    /// GET a TMDB endpoint returning a paginated list of movies.
+    async fn fetch_movie_list(&self, path: &str, op: &str) -> Result<Vec<TmdbMovie>> {
+        let url = format!("{TMDB_BASE_URL}{path}");
+        debug!(op, "tmdb list movies");
+        let response = self
+            .client
+            .get(&url)
+            .query(&[
+                ("api_key", self.api_key.as_str()),
+                ("language", "ru-RU"),
+                ("page", "1"),
+            ])
+            .send()
+            .await
+            .with_context(|| format!("failed to send tmdb {op}"))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("tmdb {op} failed: {status} — {text}"));
+        }
+        let data: TmdbSearchResponse<TmdbMovie> = response
+            .json()
+            .await
+            .with_context(|| format!("failed to parse tmdb {op} response"))?;
+        Ok(data.results)
+    }
+
+    /// GET a TMDB endpoint returning a paginated list of TV shows.
+    async fn fetch_tv_list(&self, path: &str, op: &str) -> Result<Vec<TmdbTvShow>> {
+        let url = format!("{TMDB_BASE_URL}{path}");
+        debug!(op, "tmdb list tv");
+        let response = self
+            .client
+            .get(&url)
+            .query(&[
+                ("api_key", self.api_key.as_str()),
+                ("language", "ru-RU"),
+                ("page", "1"),
+            ])
+            .send()
+            .await
+            .with_context(|| format!("failed to send tmdb {op}"))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("tmdb {op} failed: {status} — {text}"));
+        }
+        let data: TmdbSearchResponse<TmdbTvShow> = response
+            .json()
+            .await
+            .with_context(|| format!("failed to parse tmdb {op} response"))?;
+        Ok(data.results)
+    }
+
+    pub async fn trending_movies(&self) -> Result<Vec<TmdbMovie>> {
+        self.fetch_movie_list("/trending/movie/week", "trending movies")
+            .await
+    }
+
+    pub async fn trending_tv(&self) -> Result<Vec<TmdbTvShow>> {
+        self.fetch_tv_list("/trending/tv/week", "trending tv").await
+    }
+
+    pub async fn popular_movies(&self) -> Result<Vec<TmdbMovie>> {
+        self.fetch_movie_list("/movie/popular", "popular movies")
+            .await
+    }
+
+    pub async fn popular_tv(&self) -> Result<Vec<TmdbTvShow>> {
+        self.fetch_tv_list("/tv/popular", "popular tv").await
+    }
+
+    pub async fn top_rated_movies(&self) -> Result<Vec<TmdbMovie>> {
+        self.fetch_movie_list("/movie/top_rated", "top_rated movies")
+            .await
+    }
+
+    pub async fn top_rated_tv(&self) -> Result<Vec<TmdbTvShow>> {
+        self.fetch_tv_list("/tv/top_rated", "top_rated tv").await
+    }
+
+    pub async fn on_air_tv(&self) -> Result<Vec<TmdbTvShow>> {
+        self.fetch_tv_list("/tv/on_the_air", "on_the_air tv").await
+    }
+
     /// Search for TV series by title.
     pub async fn search_tv(&self, query: &str) -> Result<Vec<TmdbTvShow>> {
         let url = format!("{}/search/tv", TMDB_BASE_URL);

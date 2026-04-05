@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Discover - mview{% endblock %}
+
+{% block content %}
+<h1>Discover</h1>
+<div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;" id="discover-tabs">
+    <button class="outline dt-btn dt-active" data-cat="trending"
+        hx-get="/discover/results?category=trending"
+        hx-target="#discover-results" hx-swap="innerHTML"
+        style="margin:0;padding:4px 12px;">Trending</button>
+    <button class="outline secondary dt-btn" data-cat="popular"
+        hx-get="/discover/results?category=popular"
+        hx-target="#discover-results" hx-swap="innerHTML"
+        style="margin:0;padding:4px 12px;">Popular</button>
+    <button class="outline secondary dt-btn" data-cat="top_rated"
+        hx-get="/discover/results?category=top_rated"
+        hx-target="#discover-results" hx-swap="innerHTML"
+        style="margin:0;padding:4px 12px;">Top Rated</button>
+    <button class="outline secondary dt-btn" data-cat="airing"
+        hx-get="/discover/results?category=airing"
+        hx-target="#discover-results" hx-swap="innerHTML"
+        style="margin:0;padding:4px 12px;">Airing</button>
+</div>
+<div id="discover-results"
+    hx-get="/discover/results?category=trending"
+    hx-trigger="load"
+    hx-swap="innerHTML">
+    <p><small>Loading...</small></p>
+</div>
+<script>
+document.getElementById('discover-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('.dt-btn');
+    if (!btn) return;
+    document.querySelectorAll('.dt-btn').forEach(b => {
+        b.classList.remove('dt-active');
+        b.className = b === btn ? 'outline dt-btn dt-active' : 'outline secondary dt-btn';
+    });
+});
+</script>
+{% endblock %}

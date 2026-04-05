@@ -179,6 +179,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(routes::dashboard::routes())
         .merge(routes::search::routes())
+        .merge(routes::discover::routes())
         .merge(routes::api::routes())
         .merge(routes::series::routes())
         .merge(routes::settings::routes())

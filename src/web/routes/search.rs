@@ -29,22 +29,22 @@ fn default_limit() -> usize {
 
 /// Unified search result for display, merging TMDB and AniList sources.
 #[derive(Debug, Clone, Serialize)]
-struct SearchItem {
-    title: String,
-    original_title: Option<String>,
-    year: Option<String>,
-    overview: Option<String>,
-    poster_url: Option<String>,
-    source: String,
-    media_type: String,
-    tmdb_id: Option<i64>,
-    anilist_id: Option<i64>,
-    episodes: Option<i64>,
-    format: Option<String>,
+pub(crate) struct SearchItem {
+    pub title: String,
+    pub original_title: Option<String>,
+    pub year: Option<String>,
+    pub overview: Option<String>,
+    pub poster_url: Option<String>,
+    pub source: String,
+    pub media_type: String,
+    pub tmdb_id: Option<i64>,
+    pub anilist_id: Option<i64>,
+    pub episodes: Option<i64>,
+    pub format: Option<String>,
 }
 
 impl SearchItem {
-    fn from_tmdb(item: &TmdbSearchItem) -> Self {
+    pub(crate) fn from_tmdb(item: &TmdbSearchItem) -> Self {
         Self {
             title: item.title.clone(),
             original_title: item.original_title.clone(),
@@ -60,7 +60,7 @@ impl SearchItem {
         }
     }
 
-    fn from_anilist(item: &AniListSearchItem) -> Self {
+    pub(crate) fn from_anilist(item: &AniListSearchItem) -> Self {
         Self {
             title: item.title.clone(),
             original_title: item.original_title.clone(),
@@ -75,6 +75,30 @@ impl SearchItem {
             format: item.format.clone(),
         }
     }
+}
+
+/// Interleave AniList and TMDB items (one-from-each alternating).
+pub(crate) fn interleave_results(
+    anilist_items: Vec<SearchItem>,
+    tmdb_items: Vec<SearchItem>,
+) -> Vec<SearchItem> {
+    let mut results = Vec::new();
+    let mut ai = anilist_items.into_iter();
+    let mut ti = tmdb_items.into_iter();
+    loop {
+        let a = ai.next();
+        let t = ti.next();
+        if a.is_none() && t.is_none() {
+            break;
+        }
+        if let Some(item) = a {
+            results.push(item);
+        }
+        if let Some(item) = t {
+            results.push(item);
+        }
+    }
+    results
 }
 
 async fn search_page(
@@ -157,22 +181,7 @@ async fn search_results(
         .map(SearchItem::from_anilist)
         .collect();
 
-    let mut results: Vec<SearchItem> = Vec::new();
-    let mut ai = anilist_items.into_iter();
-    let mut ti = tmdb_items.into_iter();
-    loop {
-        let a = ai.next();
-        let t = ti.next();
-        if a.is_none() && t.is_none() {
-            break;
-        }
-        if let Some(item) = a {
-            results.push(item);
-        }
-        if let Some(item) = t {
-            results.push(item);
-        }
-    }
+    let results = interleave_results(anilist_items, tmdb_items);
 
     let tmpl = state.templates.get_template("search_results.html")?;
     let html = tmpl.render(minijinja::context! {
