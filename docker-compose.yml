@@ -24,7 +24,7 @@ services:
       - qbittorrent
 
   watchtower:
-    image: ghcr.io/nickfedor/watchtower:latest
+    image: nickfedor/watchtower:latest
     container_name: watchtower
     restart: unless-stopped
     environment:
