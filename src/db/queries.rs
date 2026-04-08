@@ -464,7 +464,7 @@ pub fn update_torrent_checked(conn: &Connection, id: i64) -> Result<()> {
 
 pub fn update_torrent_qbt_hash(conn: &Connection, id: i64, qbt_hash: &str) -> Result<()> {
     conn.execute(
-        "UPDATE torrents SET qbt_hash = ?1, updated_at = datetime('now') WHERE id = ?2",
+        "UPDATE torrents SET qbt_hash = ?1, status = 'active', updated_at = datetime('now') WHERE id = ?2",
         params![qbt_hash, id],
     )
     .with_context(|| "Failed to update torrent qbt_hash")?;
