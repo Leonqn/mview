@@ -114,7 +114,14 @@ async fn media_detail(
             not_aired_yet,
         });
     }
-    seasons_with_episodes.sort_by(|a, b| b.season.season_number.cmp(&a.season.season_number));
+    seasons_with_episodes.sort_by(|a, b| {
+        // Not aired yet first
+        let a_not_aired = a.not_aired_yet as u8;
+        let b_not_aired = b.not_aired_yet as u8;
+        b_not_aired
+            .cmp(&a_not_aired)
+            .then_with(|| b.season.season_number.cmp(&a.season.season_number))
+    });
 
     debug!(
         media_id = media.id,
