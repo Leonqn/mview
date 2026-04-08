@@ -196,7 +196,15 @@ async fn process_completed_torrent(
 
     let scan_path = match media.media_type.as_str() {
         "movie" => {
-            organize_movie_files(state, &media, &movie_title, &video_files, &companion_files, save_path).await?;
+            organize_movie_files(
+                state,
+                &media,
+                &movie_title,
+                &video_files,
+                &companion_files,
+                save_path,
+            )
+            .await?;
             // Scan the movie folder: {movies_dir}/Title (Year)
             let safe_title = organizer::movie_dest_path(
                 &state.config.paths.movies_dir,
