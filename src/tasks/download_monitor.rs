@@ -172,13 +172,35 @@ async fn process_completed_torrent(
         warn!(title = db_torrent.title, "no video files found in torrent");
     }
 
+    // For movie collections, resolve the specific film title from the season
+    let movie_title = if media.media_type == "movie" {
+        if let Some(season_num) = db_torrent.season_number {
+            let media_id = media.id;
+            let pool = state.db.clone();
+            let seasons = tokio::task::spawn_blocking(move || {
+                let conn = pool.get()?;
+                queries::get_seasons_for_media(&conn, media_id)
+            })
+            .await??;
+            seasons
+                .iter()
+                .find(|s| s.season_number == season_num)
+                .and_then(|s| s.title.clone())
+                .unwrap_or_else(|| media.title.clone())
+        } else {
+            media.title.clone()
+        }
+    } else {
+        media.title.clone()
+    };
+
     let scan_path = match media.media_type.as_str() {
         "movie" => {
-            organize_movie_files(state, &media, &video_files, &companion_files, save_path).await?;
+            organize_movie_files(state, &media, &movie_title, &video_files, &companion_files, save_path).await?;
             // Scan the movie folder: {movies_dir}/Title (Year)
             let safe_title = organizer::movie_dest_path(
                 &state.config.paths.movies_dir,
-                &media.title,
+                &movie_title,
                 media.year,
                 "dummy.mkv",
             );
@@ -300,6 +322,7 @@ async fn process_completed_torrent(
 async fn organize_movie_files(
     state: &Arc<AppState>,
     media: &crate::db::models::Media,
+    movie_title: &str,
     video_files: &[&crate::qbittorrent::client::QbtTorrentFile],
     companion_files: &[&crate::qbittorrent::client::QbtTorrentFile],
     save_path: &str,
@@ -310,7 +333,7 @@ async fn organize_movie_files(
     for file in video_files {
         let safe_name = sanitize_path(&file.name);
         let source = Path::new(save_path).join(&safe_name);
-        let dest = organizer::movie_dest_path(movies_dir, &media.title, media.year, &file.name);
+        let dest = organizer::movie_dest_path(movies_dir, movie_title, media.year, &file.name);
 
         let source_clone = source.clone();
         let dest_clone = dest.clone();
@@ -334,11 +357,17 @@ async fn organize_movie_files(
     // Mark the placeholder episode as downloaded (movies have one episode as a stub)
     if let Some(dest) = first_dest {
         let media_id = media.id;
+        let movie_title = movie_title.to_string();
         let pool = state.db.clone();
         tokio::task::spawn_blocking(move || {
             let conn = pool.get()?;
             let seasons = queries::get_seasons_for_media(&conn, media_id)?;
-            if let Some(season) = seasons.first() {
+            // Find the matching season by title (for collections), fall back to first
+            let season = seasons
+                .iter()
+                .find(|s| s.title.as_deref() == Some(&movie_title))
+                .or_else(|| seasons.first());
+            if let Some(season) = season {
                 let episodes = queries::get_episodes_for_season(&conn, season.id)?;
                 if let Some(ep) = episodes.first() {
                     let dest_str = dest.to_string_lossy().to_string();
