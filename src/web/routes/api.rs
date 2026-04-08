@@ -135,6 +135,19 @@ async fn track_movie(state: &AppState, tmdb_id: i64) -> anyhow::Result<i64> {
 
     // Check if movie belongs to a collection (franchise)
     if let Some(ref collection_ref) = details.belongs_to_collection {
+        // Collection stores tmdb_id = collection.id, check for existing
+        let pool = state.db.clone();
+        let collection_id = collection_ref.id;
+        let existing = tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            queries::get_media_by_tmdb_id(&conn, collection_id, "movie")
+        })
+        .await??;
+
+        if let Some(m) = existing {
+            return Ok(m.id);
+        }
+
         let collection = state.tmdb.get_collection(collection_ref.id).await?;
         info!(
             collection = collection.name,
@@ -227,9 +240,13 @@ async fn track_movie_collection(
     let media = Media {
         id: 0,
         media_type: "movie".to_string(),
-        title: collection.name.clone(),
-        title_original: None,
-        year: None,
+        title: tracked_movie.title.clone(),
+        title_original: tracked_movie.original_title.clone(),
+        year: tracked_movie
+            .release_date
+            .as_deref()
+            .and_then(|d| d.split('-').next())
+            .and_then(|y| y.parse::<i64>().ok()),
         tmdb_id: Some(collection.id),
         imdb_id: None,
         kinopoisk_url: None,
@@ -1497,7 +1514,7 @@ anime_dir = "/tmp/anime"
         .unwrap()
         .unwrap();
 
-        assert_eq!(media.title, "Harry Potter Collection");
+        assert_eq!(media.title, "Harry Potter 1");
         assert_eq!(media.media_type, "movie");
 
         // Verify 3 seasons were created (one per collection part)
