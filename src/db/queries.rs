@@ -480,6 +480,15 @@ pub fn update_torrent_registered_at(conn: &Connection, id: i64, registered_at: &
     Ok(())
 }
 
+pub fn update_torrent_title(conn: &Connection, id: i64, title: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE torrents SET title = ?1, updated_at = datetime('now') WHERE id = ?2",
+        params![title, id],
+    )
+    .with_context(|| "Failed to update torrent title")?;
+    Ok(())
+}
+
 pub fn update_torrent_hash(conn: &Connection, id: i64, torrent_hash: &str) -> Result<()> {
     conn.execute(
         "UPDATE torrents SET torrent_hash = ?1, updated_at = datetime('now') WHERE id = ?2",

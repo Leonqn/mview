@@ -130,6 +130,18 @@ async fn check_single_torrent(
     })
     .await??;
 
+    // Update title in DB if it changed on rutracker
+    if topic_info.title != torrent.title {
+        let torrent_id = torrent.id;
+        let new_title = topic_info.title.clone();
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            queries::update_torrent_title(&conn, torrent_id, &new_title)
+        })
+        .await??;
+    }
+
     if !result.has_update {
         // No download needed — safe to persist new metadata now
         if let Some(ref new_date) = result.new_registered_at {
@@ -199,7 +211,7 @@ async fn check_single_torrent(
 
     // Create notification about the update
     let media_id = torrent.media_id;
-    let notification_msg = format!("Torrent updated: {}", torrent.title);
+    let notification_msg = format!("Torrent updated: {}", topic_info.title);
     let pool = state.db.clone();
     tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
@@ -218,7 +230,7 @@ async fn check_single_torrent(
     .await??;
 
     // Send Telegram notification
-    let tg_msg = tg_notify::format_torrent_update(&torrent.title);
+    let tg_msg = tg_notify::format_torrent_update(&topic_info.title);
     if let Err(error) =
         tg_notify::send_notification(&state.telegram_bot, state.telegram_chat_id, &tg_msg).await
     {
