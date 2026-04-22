@@ -172,83 +172,90 @@ async fn process_completed_torrent(
         warn!(title = db_torrent.title, "no video files found in torrent");
     }
 
-    // For movie collections, resolve the specific film title from the season
-    let movie_title = if media.media_type == "movie" {
-        if let Some(season_num) = db_torrent.season_number {
-            let media_id = media.id;
-            let pool = state.db.clone();
-            let seasons = tokio::task::spawn_blocking(move || {
-                let conn = pool.get()?;
-                queries::get_seasons_for_media(&conn, media_id)
-            })
-            .await??;
-            seasons
-                .iter()
-                .find(|s| s.season_number == season_num)
-                .and_then(|s| s.title.clone())
-                .unwrap_or_else(|| media.title.clone())
-        } else {
-            media.title.clone()
-        }
+    // Resolve the season for this torrent (for movie collections and anime sequel chains
+    // where one entry may be a MOVIE instead of a TV season).
+    let torrent_season = if let Some(season_num) = db_torrent.season_number {
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+            Ok::<_, anyhow::Error>(seasons.into_iter().find(|s| s.season_number == season_num))
+        })
+        .await??
     } else {
-        media.title.clone()
+        None
     };
 
-    let scan_path = match media.media_type.as_str() {
-        "movie" => {
-            organize_movie_files(
-                state,
-                &media,
-                &movie_title,
-                &video_files,
-                &companion_files,
-                save_path,
-            )
-            .await?;
-            // Scan the movie folder: {movies_dir}/Title (Year)
-            let safe_title = organizer::movie_dest_path(
-                &state.config.paths.movies_dir,
-                &movie_title,
-                media.year,
-                "dummy.mkv",
-            );
-            safe_title
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| state.config.paths.movies_dir.clone())
-        }
-        "series" | "anime" => {
-            let base_dir =
-                if media.media_type == "anime" && !state.config.paths.anime_dir.is_empty() {
-                    &state.config.paths.anime_dir
-                } else {
-                    &state.config.paths.tv_dir
-                };
-            organize_series_files(
-                state,
-                db_torrent,
-                &media,
-                &video_files,
-                &companion_files,
-                save_path,
-            )
-            .await?;
-            let safe_title =
-                organizer::episode_dest_path(base_dir, &media.title, 1, 1, None, "dummy.mkv");
-            safe_title
-                .parent()
-                .and_then(|p| p.parent())
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| base_dir.to_string())
-        }
-        _ => {
-            warn!(
-                media_type = media.media_type,
-                title = db_torrent.title,
-                "unknown media type for torrent"
-            );
-            // Fall back to the root media dirs
-            state.config.paths.movies_dir.clone()
+    // Anime sequel chains flatten MOVIE-format AniList entries as extra seasons of the
+    // parent anime. Those should still land in the Movies library, not as a TV season.
+    let treat_as_movie = media.media_type == "movie"
+        || (media.media_type == "anime"
+            && torrent_season.as_ref().and_then(|s| s.format.as_deref()) == Some("MOVIE"));
+
+    let scan_path = if treat_as_movie {
+        let movie_title = torrent_season
+            .as_ref()
+            .and_then(|s| s.title.clone())
+            .unwrap_or_else(|| media.title.clone());
+        let year = movie_year_for_season(state, torrent_season.as_ref())
+            .await
+            .or(media.year);
+        organize_movie_files(
+            state,
+            media.id,
+            torrent_season.as_ref(),
+            &movie_title,
+            year,
+            &video_files,
+            &companion_files,
+            save_path,
+        )
+        .await?;
+        // Scan the movie folder: {movies_dir}/Title (Year)
+        let safe_title = organizer::movie_dest_path(
+            &state.config.paths.movies_dir,
+            &movie_title,
+            year,
+            "dummy.mkv",
+        );
+        safe_title
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| state.config.paths.movies_dir.clone())
+    } else {
+        match media.media_type.as_str() {
+            "series" | "anime" => {
+                let base_dir =
+                    if media.media_type == "anime" && !state.config.paths.anime_dir.is_empty() {
+                        &state.config.paths.anime_dir
+                    } else {
+                        &state.config.paths.tv_dir
+                    };
+                organize_series_files(
+                    state,
+                    db_torrent,
+                    &media,
+                    &video_files,
+                    &companion_files,
+                    save_path,
+                )
+                .await?;
+                let safe_title =
+                    organizer::episode_dest_path(base_dir, &media.title, 1, 1, None, "dummy.mkv");
+                safe_title
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| base_dir.to_string())
+            }
+            _ => {
+                warn!(
+                    media_type = media.media_type,
+                    title = db_torrent.title,
+                    "unknown media type for torrent"
+                );
+                state.config.paths.movies_dir.clone()
+            }
         }
     };
 
@@ -329,8 +336,10 @@ async fn process_completed_torrent(
 /// Organize movie files into Plex directory structure.
 async fn organize_movie_files(
     state: &Arc<AppState>,
-    media: &crate::db::models::Media,
+    media_id: i64,
+    season: Option<&crate::db::models::Season>,
     movie_title: &str,
+    year: Option<i64>,
     video_files: &[&crate::qbittorrent::client::QbtTorrentFile],
     companion_files: &[&crate::qbittorrent::client::QbtTorrentFile],
     save_path: &str,
@@ -341,7 +350,7 @@ async fn organize_movie_files(
     for file in video_files {
         let safe_name = sanitize_path(&file.name);
         let source = Path::new(save_path).join(&safe_name);
-        let dest = organizer::movie_dest_path(movies_dir, movie_title, media.year, &file.name);
+        let dest = organizer::movie_dest_path(movies_dir, movie_title, year, &file.name);
 
         let source_clone = source.clone();
         let dest_clone = dest.clone();
@@ -364,17 +373,26 @@ async fn organize_movie_files(
 
     // Mark the placeholder episode as downloaded (movies have one episode as a stub)
     if let Some(dest) = first_dest {
-        let media_id = media.id;
+        let season_id = season.map(|s| s.id);
         let movie_title = movie_title.to_string();
         let pool = state.db.clone();
         tokio::task::spawn_blocking(move || {
             let conn = pool.get()?;
-            let seasons = queries::get_seasons_for_media(&conn, media_id)?;
-            // Find the matching season by title (for collections), fall back to first
-            let season = seasons
-                .iter()
-                .find(|s| s.title.as_deref() == Some(&movie_title))
-                .or_else(|| seasons.first());
+            // Prefer the caller-resolved season (handles anime sequel chains with MOVIE seasons);
+            // fall back to matching by title for movie collections loaded without a season hint.
+            let season = if let Some(id) = season_id {
+                queries::get_season(&conn, id)?
+            } else {
+                let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+                seasons
+                    .into_iter()
+                    .find(|s| s.title.as_deref() == Some(&movie_title))
+                    .or_else(|| {
+                        queries::get_seasons_for_media(&conn, media_id)
+                            .ok()
+                            .and_then(|s| s.into_iter().next())
+                    })
+            };
             if let Some(season) = season {
                 let episodes = queries::get_episodes_for_season(&conn, season.id)?;
                 if let Some(ep) = episodes.first() {
@@ -389,6 +407,28 @@ async fn organize_movie_files(
     }
 
     Ok(())
+}
+
+/// Derive a release year from a season's episode air dates. For AniList MOVIE-format
+/// seasons the media year is the root anime's year, which is usually wrong for a later
+/// theatrical release.
+async fn movie_year_for_season(
+    state: &Arc<AppState>,
+    season: Option<&crate::db::models::Season>,
+) -> Option<i64> {
+    let season_id = season?.id;
+    let pool = state.db.clone();
+    let episodes = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        queries::get_episodes_for_season(&conn, season_id)
+    })
+    .await
+    .ok()?
+    .ok()?;
+    episodes
+        .iter()
+        .filter_map(|e| e.air_date.as_deref())
+        .find_map(|d| d.split('-').next().and_then(|y| y.parse::<i64>().ok()))
 }
 
 /// Organize series files into Plex directory structure and update episode records.
