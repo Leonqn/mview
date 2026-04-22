@@ -200,17 +200,13 @@ async fn process_completed_torrent(
         let year = movie_year_for_season(state, torrent_season.as_ref())
             .await
             .or(media.year);
-        organize_movie_files(
-            state,
-            media.id,
-            torrent_season.as_ref(),
-            &movie_title,
+        let target = MovieTarget {
+            media_id: media.id,
+            season: torrent_season.as_ref(),
+            title: &movie_title,
             year,
-            &video_files,
-            &companion_files,
-            save_path,
-        )
-        .await?;
+        };
+        organize_movie_files(state, &target, &video_files, &companion_files, save_path).await?;
         // Scan the movie folder: {movies_dir}/Title (Year)
         let safe_title = organizer::movie_dest_path(
             &state.config.paths.movies_dir,
@@ -333,13 +329,18 @@ async fn process_completed_torrent(
     Ok(scan_path)
 }
 
+/// Resolved movie destination info for a single torrent.
+struct MovieTarget<'a> {
+    media_id: i64,
+    season: Option<&'a crate::db::models::Season>,
+    title: &'a str,
+    year: Option<i64>,
+}
+
 /// Organize movie files into Plex directory structure.
 async fn organize_movie_files(
     state: &Arc<AppState>,
-    media_id: i64,
-    season: Option<&crate::db::models::Season>,
-    movie_title: &str,
-    year: Option<i64>,
+    target: &MovieTarget<'_>,
     video_files: &[&crate::qbittorrent::client::QbtTorrentFile],
     companion_files: &[&crate::qbittorrent::client::QbtTorrentFile],
     save_path: &str,
@@ -350,7 +351,7 @@ async fn organize_movie_files(
     for file in video_files {
         let safe_name = sanitize_path(&file.name);
         let source = Path::new(save_path).join(&safe_name);
-        let dest = organizer::movie_dest_path(movies_dir, movie_title, year, &file.name);
+        let dest = organizer::movie_dest_path(movies_dir, target.title, target.year, &file.name);
 
         let source_clone = source.clone();
         let dest_clone = dest.clone();
@@ -373,8 +374,9 @@ async fn organize_movie_files(
 
     // Mark the placeholder episode as downloaded (movies have one episode as a stub)
     if let Some(dest) = first_dest {
-        let season_id = season.map(|s| s.id);
-        let movie_title = movie_title.to_string();
+        let season_id = target.season.map(|s| s.id);
+        let media_id = target.media_id;
+        let movie_title = target.title.to_string();
         let pool = state.db.clone();
         tokio::task::spawn_blocking(move || {
             let conn = pool.get()?;

@@ -99,7 +99,7 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
             });
         }
         // Sort: pending items first, then by creation date desc
-        items.sort_by(|a, b| b.has_pending.cmp(&a.has_pending));
+        items.sort_by_key(|b| std::cmp::Reverse(b.has_pending));
         Ok::<_, anyhow::Error>(items)
     })
     .await??;
