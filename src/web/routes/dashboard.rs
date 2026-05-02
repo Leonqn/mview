@@ -26,7 +26,7 @@ struct SeasonDashboardInfo {
     pending: bool,
     /// Earliest future episode air_date for this season (YYYY-MM-DD), if known.
     next_air_date: Option<String>,
-    /// All known episodes are downloaded.
+    /// Season is fully downloaded (status == "completed" or every aired ep is on disk).
     complete: bool,
 }
 
@@ -34,14 +34,9 @@ struct SeasonDashboardInfo {
 struct MediaDashboardItem {
     #[serde(flatten)]
     media: crate::db::models::Media,
-    tracking_seasons: Vec<SeasonDashboardInfo>,
+    /// Seasons rendered as chips: tracking + completed (ignored seasons are hidden).
+    visible_seasons: Vec<SeasonDashboardInfo>,
     has_pending: bool,
-    /// Total seasons in DB (tracking + ignored), useful for "X seasons" summary.
-    total_seasons: usize,
-    /// Count of seasons where every aired episode is downloaded.
-    downloaded_seasons: usize,
-    /// Earliest future air_date across all tracking seasons.
-    next_air_date: Option<String>,
 }
 
 async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, AppError> {
@@ -52,14 +47,17 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
         let mut items = Vec::new();
         for media in media_list {
             let today = Local::now().format("%Y-%m-%d").to_string();
-            let seasons = queries::get_tracking_seasons_for_media(&conn, media.id)?;
-            let all_seasons = queries::get_seasons_for_media(&conn, media.id)?;
+            // Render chips for seasons the user is following or has finished.
+            // Ignored seasons (older parts of a finished show, opt-out) stay hidden.
+            let seasons: Vec<_> = queries::get_seasons_for_media(&conn, media.id)?
+                .into_iter()
+                .filter(|s| s.status != "ignored")
+                .collect();
             let torrents = queries::get_torrents_for_media(&conn, media.id)?;
             let season_ids: Vec<i64> = seasons.iter().map(|s| s.id).collect();
             let search_cache = queries::get_search_cache_for_seasons(&conn, &season_ids)?;
             let mut season_infos = Vec::new();
             let mut any_pending = false;
-            let mut media_next_air: Option<String> = None;
             let current_year = Local::now().year();
             for s in &seasons {
                 let episodes = queries::get_episodes_for_season(&conn, s.id).unwrap_or_default();
@@ -100,13 +98,7 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     .filter(|d| !d.is_empty() && *d > today.as_str())
                     .min()
                     .map(str::to_string);
-                if let Some(ref d) = next_air_date {
-                    media_next_air = Some(match media_next_air.take() {
-                        Some(prev) if prev <= *d => prev,
-                        _ => d.clone(),
-                    });
-                }
-                let complete = total > 0 && downloaded == total;
+                let complete = s.status == "completed" || (total > 0 && downloaded == total);
                 season_infos.push(SeasonDashboardInfo {
                     season_number: s.season_number,
                     title: s.title.clone(),
@@ -118,15 +110,10 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     complete,
                 });
             }
-            let downloaded_seasons = season_infos.iter().filter(|s| s.complete).count();
-            let total_seasons = all_seasons.len();
             items.push(MediaDashboardItem {
                 media,
-                tracking_seasons: season_infos,
+                visible_seasons: season_infos,
                 has_pending: any_pending,
-                total_seasons,
-                downloaded_seasons,
-                next_air_date: media_next_air,
             });
         }
         // Sort: pending items first, then by creation date desc

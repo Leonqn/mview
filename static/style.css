@@ -1,16 +1,14 @@
 /* mview custom styles */
 
-/* Series / movie detail header — flex layout that wraps cleanly on narrow screens */
+/* Series / movie detail header — fixed-column grid keeps poster + info side by side
+   at every viewport. Pico's container narrows to ~510px around 600-700px viewports,
+   which made an earlier flex-wrap version collapse the poster to full width. */
 .media-header {
-    display: flex;
+    display: grid;
+    grid-template-columns: 200px 1fr;
     gap: 1rem;
-    align-items: flex-start;
-    flex-wrap: wrap;
+    align-items: start;
     margin-bottom: 1rem;
-}
-.media-header .poster-wrap {
-    flex: 0 0 220px;
-    max-width: 100%;
 }
 .media-header .poster-wrap img {
     width: 100%;
@@ -19,7 +17,6 @@
     display: block;
 }
 .media-header .info {
-    flex: 1 1 280px;
     min-width: 0;
 }
 .media-header .info h1 {
@@ -37,6 +34,6 @@
     margin-top: 0.5rem;
     flex-wrap: wrap;
 }
-@media (max-width: 480px) {
-    .media-header .poster-wrap { flex: 0 0 140px; }
+@media (max-width: 600px) {
+    .media-header { grid-template-columns: 120px 1fr; }
 }
