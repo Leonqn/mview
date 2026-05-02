@@ -259,9 +259,17 @@ async fn track_movie_collection(
         updated_at: String::new(),
     };
 
-    // Sort parts by release date
+    // Sort parts by release date, putting unannounced (None) entries LAST so they
+    // get the highest season_numbers. Default Option ordering puts None first,
+    // which would assign a future film like "Зверополис 3" season_number=1 and
+    // break chronological sorting on the dashboard.
     let mut parts = collection.parts.clone();
-    parts.sort_by(|a, b| a.release_date.cmp(&b.release_date));
+    parts.sort_by(|a, b| match (&a.release_date, &b.release_date) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
 
     let tracked_tmdb_id = tracked_movie.id;
 

@@ -137,7 +137,14 @@ async fn check_single_collection(
     let collection = state.tmdb.get_collection(tmdb_id).await?;
 
     let mut new_parts = collection.parts.clone();
-    new_parts.sort_by(|a, b| a.release_date.cmp(&b.release_date));
+    // Same ordering rule as track_movie_collection: dated parts first by date,
+    // unannounced parts last so they take the highest season_numbers.
+    new_parts.sort_by(|a, b| match (&a.release_date, &b.release_date) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
     let new_parts: Vec<_> = new_parts
         .into_iter()
         .filter(|p| !existing_titles.contains(&p.title.to_lowercase()))
