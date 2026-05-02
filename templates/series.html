@@ -3,6 +3,49 @@
 {% block title %}{{ media.title }} - mview{% endblock %}
 
 {% block content %}
+<style>
+.media-header {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 1rem;
+    align-items: start;
+    margin-bottom: 1rem;
+}
+.media-header .poster-wrap img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    display: block;
+}
+.media-header .info { min-width: 0; }
+.media-header .info h1 { margin-top: 0; overflow-wrap: break-word; }
+.media-header .info nav { flex-wrap: wrap; }
+.media-header .actions { display: flex; gap: 0.4rem; margin-top: 0.75rem; flex-wrap: wrap; }
+.media-header .actions button {
+    margin: 0;
+    padding: 3px 10px;
+    font-size: 0.8em;
+    line-height: 1.5;
+    border: 1px solid var(--pico-muted-border-color);
+    background: transparent;
+    color: var(--pico-color);
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.media-header .actions button:hover { background: var(--pico-muted-border-color); }
+.media-header .actions button.danger:hover {
+    background: var(--pico-del-color, #c0392b);
+    color: #fff;
+    border-color: var(--pico-del-color, #c0392b);
+}
+@media (max-width: 600px) {
+    .media-header { grid-template-columns: 120px 1fr; }
+}
+</style>
 <div class="media-header">
     {% if media.poster_url %}
     <div class="poster-wrap">
@@ -39,20 +82,17 @@
 
         <div class="actions">
             <button
+                class="danger"
                 hx-post="/api/media/{{ media.id }}/delete"
                 hx-swap="none"
                 hx-confirm="Remove {{ media.title }} from tracking?"
                 hx-on::after-request="window.location='/search?q={{ media.title }}'"
-                class="outline secondary"
-                style="margin:0;padding:2px 10px;font-size:0.85em;"
-            >Remove</button>
+            >✕ Remove</button>
             {% if plex_configured %}
             <button
                 hx-post="/api/media/{{ media.id }}/plex-scan"
                 hx-swap="none"
-                class="outline"
-                style="margin:0;padding:2px 10px;font-size:0.85em;"
-            >Plex Scan</button>
+            >↻ Plex Scan</button>
             {% endif %}
         </div>
     </div>

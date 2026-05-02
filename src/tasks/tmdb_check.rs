@@ -128,8 +128,12 @@ async fn check_single_collection(
         return Ok(());
     }
 
-    let existing_titles: std::collections::HashSet<String> =
-        db_seasons.iter().filter_map(|s| s.title.clone()).collect();
+    // Match on lowercased title so TMDB casing changes ("Пламя и Пепел" → "Пламя и пепел")
+    // don't reintroduce duplicate seasons we already track.
+    let existing_titles: std::collections::HashSet<String> = db_seasons
+        .iter()
+        .filter_map(|s| s.title.as_ref().map(|t| t.to_lowercase()))
+        .collect();
 
     let collection = state.tmdb.get_collection(tmdb_id).await?;
 
@@ -137,7 +141,7 @@ async fn check_single_collection(
     new_parts.sort_by(|a, b| a.release_date.cmp(&b.release_date));
     let new_parts: Vec<_> = new_parts
         .into_iter()
-        .filter(|p| !existing_titles.contains(&p.title))
+        .filter(|p| !existing_titles.contains(&p.title.to_lowercase()))
         .collect();
 
     if new_parts.is_empty() {
