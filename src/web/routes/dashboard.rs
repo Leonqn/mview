@@ -98,7 +98,15 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     .filter(|d| !d.is_empty() && *d > today.as_str())
                     .min()
                     .map(str::to_string);
-                let complete = s.status == "completed" || (total > 0 && downloaded == total);
+                // Derive "complete" from actual episode download flags rather than
+                // trusting season.status — for movies whose air_date filter excludes
+                // them from `aired` (future release), the status can stay "completed"
+                // after the user toggles tracking off/on, leading to phantom ticks.
+                let complete = if is_movie {
+                    !episodes.is_empty() && episodes.iter().all(|e| e.downloaded)
+                } else {
+                    total > 0 && downloaded == total
+                };
                 season_infos.push(SeasonDashboardInfo {
                     season_number: s.season_number,
                     title: s.title.clone(),
