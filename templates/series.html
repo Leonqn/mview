@@ -28,7 +28,9 @@
     line-height: 1.5;
     border: 1px solid var(--pico-muted-border-color);
     background: transparent;
-    color: var(--pico-color);
+    /* Pico sets --pico-color to --pico-primary-inverse (white) on buttons,
+       so use the surrounding text color via inherit instead. */
+    color: inherit;
     border-radius: 6px;
     cursor: pointer;
     display: inline-flex;
@@ -36,11 +38,11 @@
     gap: 4px;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.media-header .actions button:hover { background: var(--pico-muted-border-color); }
+.media-header .actions button:hover { background: var(--pico-muted-border-color); color: inherit; }
 .media-header .actions button.danger:hover {
-    background: var(--pico-del-color, #c0392b);
+    background: #c0392b;
     color: #fff;
-    border-color: var(--pico-del-color, #c0392b);
+    border-color: #c0392b;
 }
 @media (max-width: 600px) {
     .media-header { grid-template-columns: 120px 1fr; }
