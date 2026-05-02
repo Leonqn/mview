@@ -1,1 +1,42 @@
 /* mview custom styles */
+
+/* Series / movie detail header — flex layout that wraps cleanly on narrow screens */
+.media-header {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+.media-header .poster-wrap {
+    flex: 0 0 220px;
+    max-width: 100%;
+}
+.media-header .poster-wrap img {
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+    display: block;
+}
+.media-header .info {
+    flex: 1 1 280px;
+    min-width: 0;
+}
+.media-header .info h1 {
+    margin-top: 0;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+.media-header .info nav {
+    flex-wrap: wrap;
+}
+.media-header .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+@media (max-width: 480px) {
+    .media-header .poster-wrap { flex: 0 0 140px; }
+}

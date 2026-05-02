@@ -3,13 +3,13 @@
 {% block title %}{{ media.title }} - mview{% endblock %}
 
 {% block content %}
-<div class="grid" style="grid-template-columns: auto 1fr;">
-    <div>
-        {% if media.poster_url %}
-        <img src="{{ media.poster_url }}" alt="{{ media.title }}" style="max-width:300px;border-radius:8px;">
-        {% endif %}
+<div class="media-header">
+    {% if media.poster_url %}
+    <div class="poster-wrap">
+        <img src="{{ media.poster_url }}" alt="{{ media.title }}">
     </div>
-    <div>
+    {% endif %}
+    <div class="info">
         <h1>{{ media.title }}{% if media.year %} ({{ media.year }}){% endif %}</h1>
         {% if media.title_original %}
         <p><em>{{ media.title_original }}</em></p>
@@ -37,7 +37,7 @@
             {% endif %}
         </nav>
 
-        <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem;">
+        <div class="actions">
             <button
                 hx-post="/api/media/{{ media.id }}/delete"
                 hx-swap="none"

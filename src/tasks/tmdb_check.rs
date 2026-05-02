@@ -42,9 +42,16 @@ pub async fn check_new_seasons(state: &Arc<AppState>) -> Result<()> {
         .await??
     };
 
+    // Includes both series and TMDB-tracked anime (e.g. One Piece added via TMDB has
+    // media_type = "anime" + tmdb_id but no anilist_id). Anime with an anilist_id is
+    // handled by anilist_check instead.
     let series: Vec<_> = media_list
         .iter()
-        .filter(|m| m.media_type == "series" && m.status == "tracking" && m.tmdb_id.is_some())
+        .filter(|m| {
+            (m.media_type == "series" || (m.media_type == "anime" && m.anilist_id.is_none()))
+                && m.status == "tracking"
+                && m.tmdb_id.is_some()
+        })
         .cloned()
         .collect();
 

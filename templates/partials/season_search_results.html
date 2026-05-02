@@ -62,14 +62,20 @@
     const rows = root.querySelectorAll('tbody tr');
     let active = new Set();
 
+    // Group tags by case/whitespace-insensitive key so "Фэнтези" / "фэнтези" /
+    // "MVO LostFilm" / "MVO  LostFilm " collapse into one filter button.
+    function tagKey(s) {
+        return (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    }
+
     function applyFilter() {
         rows.forEach(r => {
             if (active.size === 0) { r.style.display = ''; return; }
-            const tags = (r.dataset.tags || '').split(',');
-            r.style.display = [...active].every(t => tags.includes(t)) ? '' : 'none';
+            const rowKeys = (r.dataset.tags || '').split(',').map(tagKey);
+            r.style.display = [...active].every(k => rowKeys.includes(k)) ? '' : 'none';
         });
         root.querySelectorAll('.sr-tag').forEach(s => {
-            s.classList.toggle('sr-tag-hl', active.has(s.dataset.tag));
+            s.classList.toggle('sr-tag-hl', active.has(tagKey(s.dataset.tag)));
         });
         filters.querySelectorAll('.sr-tag-btn').forEach(b => {
             if (b.dataset.tag === 'all') {
@@ -80,35 +86,40 @@
         });
     }
 
-    function toggle(tag) {
-        if (tag === 'all') { active.clear(); }
-        else if (active.has(tag)) { active.delete(tag); }
-        else { active.add(tag); }
+    function toggle(key) {
+        if (key === 'all') { active.clear(); }
+        else if (active.has(key)) { active.delete(key); }
+        else { active.add(key); }
         applyFilter();
     }
 
-    function ensureBtn(tag) {
-        if (filters.querySelector(`.sr-tag-btn[data-tag="${CSS.escape(tag)}"]`)) return;
+    function ensureBtn(key, label) {
+        if (filters.querySelector(`.sr-tag-btn[data-tag="${CSS.escape(key)}"]`)) return;
         const btn = document.createElement('button');
         btn.className = 'outline sr-tag-btn';
-        btn.dataset.tag = tag;
-        btn.textContent = tag;
+        btn.dataset.tag = key;
+        btn.textContent = label;
         Object.assign(btn.style, { margin: '0', padding: '1px 8px', fontSize: '0.75em' });
-        btn.addEventListener('click', () => toggle(tag));
+        btn.addEventListener('click', () => toggle(key));
         filters.appendChild(btn);
     }
 
     filters.querySelector('.sr-tag-btn[data-tag="all"]').addEventListener('click', () => toggle('all'));
 
-    // Pre-populate filter bar with all unique tags from all results
-    const uniqueTags = new Set();
-    root.querySelectorAll('.sr-tag').forEach(el => uniqueTags.add(el.dataset.tag));
-    [...uniqueTags].sort().forEach(tag => ensureBtn(tag));
+    // Pre-populate filter bar with one button per normalized tag key.
+    // First-seen casing wins as the displayed label.
+    const labelByKey = new Map();
+    root.querySelectorAll('.sr-tag').forEach(el => {
+        const k = tagKey(el.dataset.tag);
+        if (!k) return;
+        if (!labelByKey.has(k)) labelByKey.set(k, el.dataset.tag);
+    });
+    [...labelByKey.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .forEach(([key, label]) => ensureBtn(key, label));
 
     root.querySelectorAll('.sr-tag').forEach(el => {
-        el.addEventListener('click', () => {
-            toggle(el.dataset.tag);
-        });
+        el.addEventListener('click', () => toggle(tagKey(el.dataset.tag)));
     });
 })();
 </script>

@@ -24,6 +24,10 @@ struct SeasonDashboardInfo {
     total: usize,
     downloading: bool,
     pending: bool,
+    /// Earliest future episode air_date for this season (YYYY-MM-DD), if known.
+    next_air_date: Option<String>,
+    /// All known episodes are downloaded.
+    complete: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,6 +36,12 @@ struct MediaDashboardItem {
     media: crate::db::models::Media,
     tracking_seasons: Vec<SeasonDashboardInfo>,
     has_pending: bool,
+    /// Total seasons in DB (tracking + ignored), useful for "X seasons" summary.
+    total_seasons: usize,
+    /// Count of seasons where every aired episode is downloaded.
+    downloaded_seasons: usize,
+    /// Earliest future air_date across all tracking seasons.
+    next_air_date: Option<String>,
 }
 
 async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, AppError> {
@@ -43,11 +53,13 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
         for media in media_list {
             let today = Local::now().format("%Y-%m-%d").to_string();
             let seasons = queries::get_tracking_seasons_for_media(&conn, media.id)?;
+            let all_seasons = queries::get_seasons_for_media(&conn, media.id)?;
             let torrents = queries::get_torrents_for_media(&conn, media.id)?;
             let season_ids: Vec<i64> = seasons.iter().map(|s| s.id).collect();
             let search_cache = queries::get_search_cache_for_seasons(&conn, &season_ids)?;
             let mut season_infos = Vec::new();
             let mut any_pending = false;
+            let mut media_next_air: Option<String> = None;
             let current_year = Local::now().year();
             for s in &seasons {
                 let episodes = queries::get_episodes_for_season(&conn, s.id).unwrap_or_default();
@@ -82,6 +94,19 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                 if pending {
                     any_pending = true;
                 }
+                let next_air_date = episodes
+                    .iter()
+                    .filter_map(|e| e.air_date.as_deref())
+                    .filter(|d| !d.is_empty() && *d > today.as_str())
+                    .min()
+                    .map(str::to_string);
+                if let Some(ref d) = next_air_date {
+                    media_next_air = Some(match media_next_air.take() {
+                        Some(prev) if prev <= *d => prev,
+                        _ => d.clone(),
+                    });
+                }
+                let complete = total > 0 && downloaded == total;
                 season_infos.push(SeasonDashboardInfo {
                     season_number: s.season_number,
                     title: s.title.clone(),
@@ -89,13 +114,19 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     total,
                     downloading,
                     pending,
+                    next_air_date,
+                    complete,
                 });
             }
-            let (tracking_seasons, has_pending) = (season_infos, any_pending);
+            let downloaded_seasons = season_infos.iter().filter(|s| s.complete).count();
+            let total_seasons = all_seasons.len();
             items.push(MediaDashboardItem {
                 media,
-                tracking_seasons,
-                has_pending,
+                tracking_seasons: season_infos,
+                has_pending: any_pending,
+                total_seasons,
+                downloaded_seasons,
+                next_air_date: media_next_air,
             });
         }
         // Sort: pending items first, then by creation date desc
@@ -376,9 +407,10 @@ anime_dir = "/tmp/anime"
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
         assert!(body_str.contains("Test Series"));
-        // Seasons 1 and 3 are tracking, season 2 is ignored
-        assert!(body_str.contains("S1:"));
-        assert!(body_str.contains("S3:"));
-        assert!(!body_str.contains("S2:"));
+        // Seasons 1 and 3 are tracking, season 2 is ignored.
+        // Card layout renders season chips like "S1" / "S3".
+        assert!(body_str.contains("S1"));
+        assert!(body_str.contains("S3"));
+        assert!(!body_str.contains("S2"));
     }
 }
