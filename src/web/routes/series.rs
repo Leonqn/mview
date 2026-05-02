@@ -129,16 +129,15 @@ async fn media_detail(
     seasons_with_episodes.sort_by(|a, b| {
         let a_not_aired = a.not_aired_yet as u8;
         let b_not_aired = b.not_aired_yet as u8;
-        b_not_aired
-            .cmp(&a_not_aired)
-            // Newest first; missing dates fall to the bottom of their tier.
-            .then_with(|| match (season_date(a), season_date(b)) {
+        b_not_aired.cmp(&a_not_aired).then_with(|| {
+            // When both seasons have a date, newest first. When at least one is
+            // missing a date (e.g. an upcoming sequel without an announced premiere),
+            // fall back to season_number DESC so newer entries stay on top.
+            match (season_date(a), season_date(b)) {
                 (Some(da), Some(db)) => db.cmp(&da),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            })
-            .then_with(|| b.season.season_number.cmp(&a.season.season_number))
+                _ => b.season.season_number.cmp(&a.season.season_number),
+            }
+        })
     });
 
     debug!(

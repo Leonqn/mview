@@ -19,9 +19,8 @@ pub async fn run(state: Arc<AppState>) {
     );
 
     let mut interval = tokio::time::interval(CHECK_INTERVAL);
-    // Skip the immediate first tick
-    interval.tick().await;
-
+    // First tick fires immediately so freshly-restarted servers catch up on new
+    // episodes/seasons without waiting a full interval.
     loop {
         interval.tick().await;
 

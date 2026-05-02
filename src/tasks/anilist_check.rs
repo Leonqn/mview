@@ -19,8 +19,7 @@ pub async fn run(state: Arc<AppState>) {
     );
 
     let mut interval = tokio::time::interval(CHECK_INTERVAL);
-    interval.tick().await;
-
+    // First tick fires immediately so freshly-restarted servers catch up.
     loop {
         interval.tick().await;
 
