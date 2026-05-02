@@ -114,12 +114,30 @@ async fn media_detail(
             not_aired_yet,
         });
     }
+    // Earliest episode air_date stands in for "release date". Movie collection parts
+    // each have one episode whose air_date == release_date; series/anime use the
+    // premiere date of the season. Sequel chains assign chronologically, so for anime
+    // air_date order matches season_number order — collections are where this fixes
+    // misorder caused by check_single_collection appending late additions.
+    fn season_date(s: &SeasonWithEpisodes) -> Option<String> {
+        s.episodes
+            .iter()
+            .filter_map(|e| e.air_date.clone())
+            .filter(|d| !d.is_empty())
+            .min()
+    }
     seasons_with_episodes.sort_by(|a, b| {
-        // Not aired yet first
         let a_not_aired = a.not_aired_yet as u8;
         let b_not_aired = b.not_aired_yet as u8;
         b_not_aired
             .cmp(&a_not_aired)
+            // Newest first; missing dates fall to the bottom of their tier.
+            .then_with(|| match (season_date(a), season_date(b)) {
+                (Some(da), Some(db)) => db.cmp(&da),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
             .then_with(|| b.season.season_number.cmp(&a.season.season_number))
     });
 
