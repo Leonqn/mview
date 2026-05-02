@@ -72,12 +72,15 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                         let date = e.air_date.as_deref().filter(|d| !d.is_empty());
                         match date {
                             Some(d) => d <= today.as_str(),
-                            // No air_date in DB. AniList doesn't return airingSchedule
-                            // for long-finished anime (e.g. Fate/Zero 2011), so eps
-                            // come back dateless. Treat them as aired when the media
-                            // itself has been released — applies to both movies and
-                            // series/anime now.
-                            None => media_released,
+                            // Empty air_date means different things by source:
+                            //  - movies: per-episode air_date is just a placeholder,
+                            //    use the media year.
+                            //  - AniList-tracked: AniList stops exposing airingSchedule
+                            //    for long-finished anime (e.g. Fate/Zero), so dateless
+                            //    episodes really did air — trust media_released.
+                            //  - TMDB-tracked series/anime: TMDB always populates
+                            //    air_date once aired, so dateless = upcoming/TBA.
+                            None => is_movie || (media.anilist_id.is_some() && media_released),
                         }
                     })
                     .collect();
