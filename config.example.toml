@@ -34,3 +34,9 @@ anime_dir = "/data/media/anime"
 [server]
 host = "0.0.0.0"
 port = 3000
+
+# SQLite database path. Should live in a bind-mounted directory so SQLite's
+# -wal and -shm sidecar files are visible to host tooling — otherwise the
+# container's WAL diverges from anything the host writes via sqlite3.
+[database]
+path = "/data/mview.db"

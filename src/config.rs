@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fmt;
-use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
@@ -15,6 +14,26 @@ pub struct Config {
     pub paths: PathsConfig,
     #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)]
+    pub database: DatabaseConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct DatabaseConfig {
+    #[serde(default = "default_db_path")]
+    pub path: String,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            path: default_db_path(),
+        }
+    }
+}
+
+fn default_db_path() -> String {
+    "mview.db".to_string()
 }
 
 #[derive(Deserialize, Clone)]
@@ -148,8 +167,8 @@ impl Config {
             .unwrap_or_else(|| "config.toml".to_string())
     }
 
-    pub fn db_path() -> PathBuf {
-        PathBuf::from("mview.db")
+    pub fn db_path(&self) -> &str {
+        &self.database.path
     }
 }
 

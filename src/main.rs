@@ -29,9 +29,9 @@ async fn main() -> anyhow::Result<()> {
     let config_path = Config::config_path_from_args();
     let config = Config::load(&config_path)?;
 
-    let db_path = Config::db_path();
-    let pool = db::init_pool(&db_path.to_string_lossy())?;
-    info!(path = %db_path.display(), "database initialized");
+    let db_path = config.db_path();
+    let pool = db::init_pool(db_path)?;
+    info!(path = %db_path, "database initialized");
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
 

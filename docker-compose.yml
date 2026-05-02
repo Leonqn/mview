@@ -12,7 +12,6 @@ services:
     volumes:
       - ./config.toml:/app/config.toml:ro
       - ./data:/data
-      - ./mview.db:/app/mview.db
     logging:
       driver: json-file
       options:

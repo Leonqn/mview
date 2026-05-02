@@ -249,8 +249,8 @@ async fn check_single_torrent(
 mod tests {
     use super::*;
     use crate::config::{
-        Config, PathsConfig, PlexConfig, QbittorrentConfig, RutrackerConfig, ServerConfig,
-        TelegramConfig, TmdbConfig,
+        Config, DatabaseConfig, PathsConfig, PlexConfig, QbittorrentConfig, RutrackerConfig,
+        ServerConfig, TelegramConfig, TmdbConfig,
     };
     use crate::db;
     use crate::db::models::{Media, Torrent};
@@ -283,6 +283,7 @@ mod tests {
                 anime_dir: "/tmp/anime".to_string(),
             },
             server: ServerConfig::default(),
+            database: DatabaseConfig::default(),
         };
 
         let rt_config = Arc::new(config.rutracker.clone());

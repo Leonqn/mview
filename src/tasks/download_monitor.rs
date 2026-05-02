@@ -744,8 +744,8 @@ mod tests {
         // This tests the early return when there are no active torrents with qbt_hash.
         // We need a real AppState for this, so we construct one with an in-memory DB.
         use crate::config::{
-            Config, PathsConfig, PlexConfig, QbittorrentConfig, RutrackerConfig, ServerConfig,
-            TelegramConfig, TmdbConfig,
+            Config, DatabaseConfig, PathsConfig, PlexConfig, QbittorrentConfig, RutrackerConfig,
+            ServerConfig, TelegramConfig, TmdbConfig,
         };
         use crate::db;
         use crate::qbittorrent::client::QbtClient;
@@ -778,6 +778,7 @@ mod tests {
                 anime_dir: "/tmp/anime".to_string(),
             },
             server: ServerConfig::default(),
+            database: DatabaseConfig::default(),
         };
 
         let rt_config = Arc::new(config.rutracker.clone());
