@@ -654,17 +654,37 @@ fn extract_episode_number(filename: &str) -> Option<i64> {
         }
     }
 
-    // Try " - XX" or ".XX." pattern with standalone numbers
-    // Extract the last group of digits before the file extension as a fallback
+    // Fallback: extract the last episode-like digit group.
     let stem = Path::new(filename)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or(filename);
-    // Find digit groups, prefer the last one that looks like an episode number (1-999).
+    // Strip bracketed segments — release group tags, hash suffixes like
+    // [D04FDB0D], and quality/codec lists in (...) — almost never contain the
+    // episode number. Without this, a hash trailing the filename steals the
+    // fallback (e.g. "One Piece - 1159 [1080p CR WEB-DL AVC AAC][D04FDB0D]"
+    // returned 0 from "0D" instead of 1159).
+    let cleaned: String = {
+        let mut out = String::new();
+        let mut paren = 0;
+        let mut bracket = 0;
+        for c in stem.chars() {
+            match c {
+                '(' => paren += 1,
+                ')' if paren > 0 => paren -= 1,
+                '[' => bracket += 1,
+                ']' if bracket > 0 => bracket -= 1,
+                _ if paren == 0 && bracket == 0 => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    };
     // Skip known non-episode numbers (resolutions like 720p, 1080p, 480p, 2160p).
+    // Cap raised to 10000 so long-running anime (One Piece 1100+) still parse.
     let resolution_numbers: &[i64] = &[240, 360, 480, 720, 1080, 2160, 4320];
     let mut last_num = None;
-    let chars_vec: Vec<char> = stem.chars().collect();
+    let chars_vec: Vec<char> = cleaned.chars().collect();
     let mut i = 0;
     while i < chars_vec.len() {
         if chars_vec[i].is_ascii_digit() {
@@ -687,7 +707,7 @@ fn extract_episode_number(filename: &str) -> Option<i64> {
                     || chars_vec[start_idx - 1] == 'h'
                     || chars_vec[start_idx - 1] == 'H');
             if let Ok(n) = num_str.parse::<i64>()
-                && (0..1000).contains(&n)
+                && (0..10000).contains(&n)
                 && !is_resolution
                 && !is_codec
                 && !resolution_numbers.contains(&n)
@@ -928,6 +948,25 @@ mod tests {
     #[test]
     fn test_extract_episode_number_none() {
         assert_eq!(extract_episode_number("Show.mkv"), None);
+    }
+
+    #[test]
+    fn test_extract_episode_number_strips_brackets_and_high_episodes() {
+        // Erai-raws style with hash suffix: digits inside brackets must not
+        // be picked up. Episode number is a 4-digit value (One Piece) — must
+        // not be capped out either.
+        assert_eq!(
+            extract_episode_number(
+                "[Erai-raws] One Piece - 1159 [1080p CR WEB-DL AVC AAC][D04FDB0D].mkv"
+            ),
+            Some(1159)
+        );
+        assert_eq!(
+            extract_episode_number(
+                "[Erai-raws] One Piece - 1156 [1080p CR WEB-DL AVC AAC][58B0C8A2].mkv"
+            ),
+            Some(1156)
+        );
     }
 
     #[test]
