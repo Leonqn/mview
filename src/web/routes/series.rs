@@ -402,10 +402,20 @@ fn dedup_search_results(results: Vec<SearchResult>) -> Vec<SearchResult> {
         .collect()
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct SearchSeasonForm {
+    /// User-toggled override that runs broad_fallback alongside primary/fallback,
+    /// even if earlier tiers returned results.
+    #[serde(default)]
+    broad: Option<String>,
+}
+
 async fn search_season(
     State(state): State<Arc<AppState>>,
     Path(season_id): Path<i64>,
+    Form(form): Form<SearchSeasonForm>,
 ) -> Result<Html<String>, AppError> {
+    let force_broad = matches!(form.broad.as_deref(), Some("1" | "true" | "on" | "yes"));
     let pool = state.db.clone();
     let (season, media, tv_season_number) = tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
@@ -440,7 +450,9 @@ async fn search_season(
     let mut errors: Vec<String> = Vec::new();
     let mut base_idx: usize = 0;
 
-    // Try each tier in order, stopping when one returns results.
+    // Try each tier in order, stopping when one returns results — unless the
+    // user toggled `broad`, in which case we run broad_fallback regardless so
+    // its broader matches show up alongside primary/fallback hits.
     for (tier_name, queries) in [
         ("primary", &sq.primary),
         ("fallback", &sq.fallback),
@@ -449,7 +461,9 @@ async fn search_season(
         if queries.is_empty() {
             continue;
         }
-        if !all_results.is_empty() {
+        let is_broad = tier_name == "broad_fallback";
+        let force_run = is_broad && force_broad;
+        if !all_results.is_empty() && !force_run {
             break;
         }
         if base_idx > 0 {

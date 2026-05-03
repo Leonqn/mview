@@ -20,8 +20,20 @@
                 <span style="font-size:0.8em;opacity:0.6;white-space:nowrap;">Downloaded</span>
                 {% endif %}
                 {% if not entry.not_aired_yet %}
+                <label
+                    style="font-size:0.75em;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;margin:0;"
+                    title="Run the broad title-only fallback even if precise matches were found. Useful for non-standard releases."
+                >
+                    <input
+                        type="checkbox"
+                        id="broad-search-{{ entry.season.id }}"
+                        style="margin:0;width:auto;"
+                    >broad
+                </label>
                 <button
                     hx-post="/media/seasons/{{ entry.season.id }}/search"
+                    hx-include="#broad-search-{{ entry.season.id }}"
+                    hx-vals='js:{broad: document.getElementById("broad-search-{{ entry.season.id }}").checked ? "1" : "0"}'
                     hx-target="#season-search-{{ entry.season.id }}"
                     hx-swap="innerHTML"
                     hx-indicator="#search-spinner-{{ entry.season.id }}"
