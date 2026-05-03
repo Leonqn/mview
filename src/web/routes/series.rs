@@ -463,8 +463,11 @@ async fn search_season(
         }
         let is_broad = tier_name == "broad_fallback";
         let force_run = is_broad && force_broad;
+        // Skip this tier if a previous tier already returned results, unless
+        // it's broad_fallback and the user explicitly asked to force it.
+        // `continue` (not `break`) so broad_fallback still gets a chance.
         if !all_results.is_empty() && !force_run {
-            break;
+            continue;
         }
         if base_idx > 0 {
             info!(tier = tier_name, queries = ?queries, "previous tier empty, trying next");

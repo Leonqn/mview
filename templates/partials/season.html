@@ -21,13 +21,13 @@
                 {% endif %}
                 {% if not entry.not_aired_yet %}
                 <label
-                    style="font-size:0.75em;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;margin:0;"
+                    style="font-size:0.8em;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;margin:0;opacity:0.75;"
                     title="Run the broad title-only fallback even if precise matches were found. Useful for non-standard releases."
                 >
                     <input
                         type="checkbox"
                         id="broad-search-{{ entry.season.id }}"
-                        style="margin:0;width:auto;"
+                        style="margin:0;width:1em;height:1em;flex-shrink:0;"
                     >broad
                 </label>
                 <button
