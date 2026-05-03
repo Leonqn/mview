@@ -670,19 +670,28 @@ async fn track_anime(state: &AppState, anilist_id: i64) -> anyhow::Result<i64> {
         .unwrap_or_default();
     let title_original = clicked.title.native.clone();
 
-    // Check for existing media with same title (cross-source dedup)
+    // Cross-source dedup: if the user already tracked this anime via TMDB (or
+    // some other route) with the same title, upgrade it with AniList info.
+    // Only match anime — without the media_type filter the title lookup happily
+    // collides with a live-action series that shares the romanized name
+    // (e.g. AniList "One Piece" hijacking the "ONE PIECE. БОЛЬШОЙ КУШ" series).
     let pool = state.db.clone();
     let t = title.clone();
     let t_orig = title_original.clone();
     let existing = tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
-        if let Some(m) = queries::find_media_by_title(&conn, &t)? {
+        if let Some(m) = queries::find_media_by_title(&conn, &t)?
+            && m.media_type == "anime"
+        {
             return Ok(Some(m));
         }
-        if let Some(ref orig) = t_orig {
-            return queries::find_media_by_title(&conn, orig);
+        if let Some(ref orig) = t_orig
+            && let Some(m) = queries::find_media_by_title(&conn, orig)?
+            && m.media_type == "anime"
+        {
+            return Ok(Some(m));
         }
-        Ok(None)
+        Ok::<_, anyhow::Error>(None)
     })
     .await??;
 
@@ -713,6 +722,17 @@ async fn track_anime(state: &AppState, anilist_id: i64) -> anyhow::Result<i64> {
             .await??
         };
 
+        // Filesystem fallback: when AniList renumbers episodes (e.g. TMDB sagas
+        // collapsed into one AniList sequel chain), the (sn, ep) lookup fails
+        // even though hardlinks are still in place. Probe the expected dest
+        // path for each new episode and pick up the existing file by inode.
+        let media_title = m.title.clone();
+        let plex_dir = if !state.config.paths.anime_dir.is_empty() {
+            state.config.paths.anime_dir.clone()
+        } else {
+            state.config.paths.tv_dir.clone()
+        };
+
         let season_data = build_anime_season_data(&chain);
         tokio::task::spawn_blocking(move || {
             let conn = pool.get()?;
@@ -729,6 +749,23 @@ async fn track_anime(state: &AppState, anilist_id: i64) -> anyhow::Result<i64> {
                         ep.downloaded = true;
                         if !path.is_empty() {
                             ep.file_path = Some(path.clone());
+                        }
+                    } else {
+                        // Try common video extensions at the canonical Plex path
+                        for ext in ["mkv", "mp4", "avi", "ts"] {
+                            let dest = crate::plex::organizer::episode_dest_path(
+                                &plex_dir,
+                                &media_title,
+                                sn,
+                                ep.episode_number,
+                                ep.title.as_deref(),
+                                &format!("dummy.{ext}"),
+                            );
+                            if dest.exists() {
+                                ep.downloaded = true;
+                                ep.file_path = Some(dest.to_string_lossy().to_string());
+                                break;
+                            }
                         }
                     }
                     queries::insert_episode(&tx, &ep)?;
