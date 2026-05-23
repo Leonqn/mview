@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -269,11 +270,11 @@ impl AniListClient {
             if !seen.insert(root_id) {
                 break;
             }
-            let media = match cache.get(&root_id) {
-                Some(m) => m,
-                None => {
+            let media = match cache.entry(root_id) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => {
                     let m = self.get_media(root_id).await?;
-                    cache.entry(root_id).or_insert(m)
+                    e.insert(m)
                 }
             };
             match find_prequel(media) {
