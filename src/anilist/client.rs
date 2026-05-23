@@ -269,11 +269,14 @@ impl AniListClient {
             if !seen.insert(root_id) {
                 break;
             }
-            if !cache.contains_key(&root_id) {
-                let m = self.get_media(root_id).await?;
-                cache.insert(root_id, m);
-            }
-            match find_prequel(&cache[&root_id]) {
+            let media = match cache.get(&root_id) {
+                Some(m) => m,
+                None => {
+                    let m = self.get_media(root_id).await?;
+                    cache.entry(root_id).or_insert(m)
+                }
+            };
+            match find_prequel(media) {
                 Some(id) => {
                     debug!(current = root_id, prequel = id, "following prequel");
                     root_id = id;
