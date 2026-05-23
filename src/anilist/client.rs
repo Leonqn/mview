@@ -1,7 +1,10 @@
+use std::collections::HashMap;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::json;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::models::{AniListMedia, AniListRelationNode, GraphQLResponse, MediaData, SearchData};
 
@@ -204,13 +207,35 @@ impl AniListClient {
             "variables": { "id": id }
         });
 
-        let response = self
-            .client
-            .post(ANILIST_URL)
-            .json(&body)
-            .send()
-            .await
-            .context("failed to send anilist media request")?;
+        let mut attempt: u32 = 0;
+        let response = loop {
+            attempt += 1;
+            let response = self
+                .client
+                .post(ANILIST_URL)
+                .json(&body)
+                .send()
+                .await
+                .context("failed to send anilist media request")?;
+
+            if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt <= 3 {
+                let retry_after = response
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(60)
+                    .clamp(1, 65);
+                warn!(
+                    id,
+                    attempt, retry_after, "anilist 429, sleeping then retrying"
+                );
+                tokio::time::sleep(Duration::from_secs(retry_after)).await;
+                continue;
+            }
+
+            break response;
+        };
 
         if !response.status().is_success() {
             let status = response.status();
@@ -233,6 +258,10 @@ impl AniListClient {
     pub async fn get_sequel_chain(&self, start_id: i64) -> Result<Vec<AniListMedia>> {
         debug!(start_id, "building franchise chain");
 
+        // Cache fetched entries — prequel walk and sequel walk overlap heavily
+        // (root + all back-walked nodes get revisited on the forward pass).
+        let mut cache: HashMap<i64, AniListMedia> = HashMap::new();
+
         // Walk back through PREQUELs to find the root of the franchise
         let mut root_id = start_id;
         let mut seen = std::collections::HashSet::new();
@@ -240,8 +269,11 @@ impl AniListClient {
             if !seen.insert(root_id) {
                 break;
             }
-            let media = self.get_media(root_id).await?;
-            match find_prequel(&media) {
+            if !cache.contains_key(&root_id) {
+                let m = self.get_media(root_id).await?;
+                cache.insert(root_id, m);
+            }
+            match find_prequel(&cache[&root_id]) {
                 Some(id) => {
                     debug!(current = root_id, prequel = id, "following prequel");
                     root_id = id;
@@ -264,7 +296,11 @@ impl AniListClient {
                 break;
             }
 
-            let media = self.get_media(current_id).await?;
+            let media = if let Some(m) = cache.remove(&current_id) {
+                m
+            } else {
+                self.get_media(current_id).await?
+            };
             let sequel_id = find_sequel(&media);
 
             chain.push(media);

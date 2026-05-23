@@ -548,7 +548,7 @@ mod tests {
             telegram_bot: teloxide::Bot::new("fake:token"),
             telegram_chat_id: 0,
             config,
-            templates: crate::web::init_templates(),
+            templates: crate::web::init_templates("https://rutracker.org"),
         })
     }
 

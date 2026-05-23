@@ -159,7 +159,7 @@ anime_dir = "/tmp/anime"
             telegram_bot: teloxide::Bot::new("fake:token"),
             telegram_chat_id: 0,
             config,
-            templates: web::init_templates(),
+            templates: web::init_templates("https://rutracker.org"),
         })
     }
 

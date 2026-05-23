@@ -28,11 +28,15 @@ pub struct AppState {
     pub telegram_chat_id: i64,
 }
 
-pub fn init_templates() -> Environment<'static> {
+pub fn init_templates(rutracker_url: &str) -> Environment<'static> {
     let mut env = Environment::new();
     env.set_loader(minijinja::path_loader("templates"));
     env.add_filter("truncate", truncate_filter);
     env.add_filter("extract_tags", extract_tags_filter);
+    env.add_global(
+        "rutracker_url",
+        rutracker_url.trim_end_matches('/').to_string(),
+    );
     env
 }
 

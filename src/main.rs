@@ -51,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
     let telegram_bot = teloxide::Bot::new(&config.telegram.bot_token);
     let telegram_chat_id = config.telegram.chat_id;
 
+    let templates = web::init_templates(&config.rutracker.url);
     let state = Arc::new(AppState {
         db: pool,
         rutracker: rt_client,
@@ -61,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
         telegram_bot: telegram_bot.clone(),
         telegram_chat_id,
         config,
-        templates: web::init_templates(),
+        templates,
     });
 
     // Spawn background tasks before starting the server

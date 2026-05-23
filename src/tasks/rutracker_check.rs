@@ -20,9 +20,7 @@ pub async fn run(state: Arc<AppState>) {
     );
 
     let mut interval = tokio::time::interval(CHECK_INTERVAL);
-    // Skip the immediate first tick to avoid hammering RuTracker on startup
-    interval.tick().await;
-
+    // First tick fires immediately so freshly-restarted servers catch up.
     loop {
         interval.tick().await;
 
@@ -293,6 +291,7 @@ mod tests {
         let qbt_config = Arc::new(config.qbittorrent.clone());
         let qbt_client = QbtClient::new(qbt_config).unwrap();
 
+        let templates = crate::web::init_templates(&config.rutracker.url);
         Arc::new(AppState {
             db: db::init_pool(":memory:").unwrap(),
             rutracker: rt_client,
@@ -303,7 +302,7 @@ mod tests {
             telegram_bot: teloxide::Bot::new("fake:token"),
             telegram_chat_id: 0,
             config,
-            templates: crate::web::init_templates(),
+            templates,
         })
     }
 

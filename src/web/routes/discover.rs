@@ -187,7 +187,7 @@ anime_dir = "/tmp/anime"
         let tmdb_client = TmdbClient::new(&config.tmdb.api_key).unwrap();
         let qbt_config = Arc::new(config.qbittorrent.clone());
         let qbt_client = crate::qbittorrent::client::QbtClient::new(qbt_config).unwrap();
-        let templates = web::init_templates();
+        let templates = web::init_templates("https://rutracker.org");
         Arc::new(AppState {
             db: pool,
             rutracker: rt_client,
