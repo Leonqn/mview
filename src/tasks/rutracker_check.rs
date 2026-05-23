@@ -128,8 +128,15 @@ async fn check_single_torrent(
     })
     .await??;
 
-    // Update title in DB if it changed on rutracker
-    if topic_info.title != torrent.title {
+    // Update title in DB if it changed on rutracker. Skip empty titles so a
+    // failed parse (login page, captcha, page structure change) doesn't wipe
+    // the existing title.
+    if topic_info.title.is_empty() {
+        warn!(
+            topic_id,
+            "parse_topic returned empty title, skipping title update"
+        );
+    } else if topic_info.title != torrent.title {
         let torrent_id = torrent.id;
         let new_title = topic_info.title.clone();
         let pool = state.db.clone();
