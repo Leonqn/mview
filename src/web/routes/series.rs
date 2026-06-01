@@ -326,21 +326,50 @@ async fn download_search_result(
             .await?;
     }
 
-    // Use torrent_hash from rutracker magnet link as qbt_hash
-    let qbt_hash = topic_info.torrent_hash.clone();
+    // The .torrent bytes are the authoritative source for the info-hash (the
+    // key qBittorrent uses) and the torrent name. rutracker's topic-page parse
+    // is flaky and can return an empty hash/title; without a qbt_hash the
+    // download_monitor can never match and organize the torrent. Derive both
+    // from the file and fall back to the parsed topic info only if it fails.
+    let (computed_hash, computed_name) =
+        match crate::rutracker::torrent_file::parse_torrent_meta(&torrent_bytes) {
+            Some((hash, name)) => (Some(hash), name),
+            None => (None, None),
+        };
+    let qbt_hash = computed_hash
+        .clone()
+        .or_else(|| topic_info.torrent_hash.clone());
+
+    // Best available title: prefer the parsed topic title, fall back to the
+    // .torrent's own name. Used for fresh inserts and to backfill rows that an
+    // earlier failed parse left blank.
+    let best_title = if topic_info.title.trim().is_empty() {
+        computed_name.clone()
+    } else {
+        Some(topic_info.title.clone())
+    };
 
     let torrent_id = if let Some(existing) = existing_torrent {
-        // Torrent already in DB — just update qbt_hash
+        // Torrent already in DB (re-download of the same release). Backfill the
+        // qbt_hash and, if an earlier flaky parse left the title blank, the
+        // title too — otherwise the row stays nameless forever.
         let tid = existing.id;
-        if let Some(ref hash) = qbt_hash {
-            let hash = hash.clone();
-            let pool = state.db.clone();
-            tokio::task::spawn_blocking(move || {
-                let conn = pool.get()?;
-                queries::update_torrent_qbt_hash(&conn, tid, &hash)
-            })
-            .await??;
-        }
+        let backfill_title = best_title
+            .clone()
+            .filter(|_| existing.title.trim().is_empty());
+        let qbt_hash = qbt_hash.clone();
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            if let Some(ref hash) = qbt_hash {
+                queries::update_torrent_qbt_hash(&conn, tid, hash)?;
+            }
+            if let Some(ref title) = backfill_title {
+                queries::update_torrent_title(&conn, tid, title)?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await??;
         tid
     } else {
         // Downloading a different release for a season that may already have a
@@ -357,7 +386,9 @@ async fn download_search_result(
             id: 0,
             media_id: form.media_id,
             rutracker_topic_id: form.topic_id.clone(),
-            title: topic_info.title,
+            // Prefer the parsed topic title; fall back to the .torrent name when
+            // the topic page came back empty so the row isn't blank in the UI.
+            title: best_title.clone().unwrap_or_default(),
             quality: topic_info.quality,
             size_bytes: form
                 .size_bytes
@@ -368,7 +399,7 @@ async fn download_search_result(
             episode_info: None,
             registered_at: topic_info.registered_at,
             last_checked_at: None,
-            torrent_hash: topic_info.torrent_hash,
+            torrent_hash: topic_info.torrent_hash.or_else(|| computed_hash.clone()),
             qbt_hash,
             status: "active".to_string(),
             auto_update: true,

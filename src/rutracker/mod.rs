@@ -4,3 +4,4 @@ pub mod download;
 pub mod monitor;
 pub mod search;
 pub mod topic;
+pub mod torrent_file;
