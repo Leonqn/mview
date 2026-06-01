@@ -664,18 +664,36 @@ fn extract_episode_number(filename: &str) -> Option<i64> {
     // episode number. Without this, a hash trailing the filename steals the
     // fallback (e.g. "One Piece - 1159 [1080p CR WEB-DL AVC AAC][D04FDB0D]"
     // returned 0 from "0D" instead of 1159).
+    //
+    // Exception: a bracketed group that is purely digits IS the episode number
+    // in many anime releases (e.g. "Title S4 [01].avi"). Keep those — dropping
+    // them would leave only the season marker ("S4") and map every file to the
+    // same episode.
     let cleaned: String = {
         let mut out = String::new();
-        let mut paren = 0;
-        let mut bracket = 0;
-        for c in stem.chars() {
-            match c {
-                '(' => paren += 1,
-                ')' if paren > 0 => paren -= 1,
-                '[' => bracket += 1,
-                ']' if bracket > 0 => bracket -= 1,
-                _ if paren == 0 && bracket == 0 => out.push(c),
-                _ => {}
+        let mut chars = stem.chars().peekable();
+        while let Some(c) = chars.next() {
+            let close = match c {
+                '(' => Some(')'),
+                '[' => Some(']'),
+                _ => None,
+            };
+            let Some(close_ch) = close else {
+                out.push(c);
+                continue;
+            };
+            let mut inner = String::new();
+            for ic in chars.by_ref() {
+                if ic == close_ch {
+                    break;
+                }
+                inner.push(ic);
+            }
+            let trimmed = inner.trim();
+            if !trimmed.is_empty() && trimmed.bytes().all(|b| b.is_ascii_digit()) {
+                out.push(' ');
+                out.push_str(trimmed);
+                out.push(' ');
             }
         }
         out
@@ -966,6 +984,26 @@ mod tests {
                 "[Erai-raws] One Piece - 1156 [1080p CR WEB-DL AVC AAC][58B0C8A2].mkv"
             ),
             Some(1156)
+        );
+    }
+
+    #[test]
+    fn test_extract_episode_number_bracketed_episode() {
+        // Anime release with the episode number in brackets and a season marker
+        // in the name. The "[NN]" is the episode — must not collapse to the
+        // season number ("S4"). Regression: all files mapped to one episode.
+        assert_eq!(
+            extract_episode_number("Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e S4 [01].avi"),
+            Some(1)
+        );
+        assert_eq!(
+            extract_episode_number("Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e S4 [10].avi"),
+            Some(10)
+        );
+        // Bracketed episode alongside a bracketed quality tag.
+        assert_eq!(
+            extract_episode_number("Some Show - [12] [1080p].mkv"),
+            Some(12)
         );
     }
 
