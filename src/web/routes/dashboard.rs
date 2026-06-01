@@ -6,7 +6,7 @@ use axum::response::Html;
 use axum::routing::get;
 use serde::Serialize;
 
-use chrono::{Datelike, Local};
+use chrono::{Datelike, Duration, Local};
 
 use crate::db::queries;
 use crate::error::AppError;
@@ -28,6 +28,10 @@ struct SeasonDashboardInfo {
     next_air_date: Option<String>,
     /// Season is fully downloaded (status == "completed" or every aired ep is on disk).
     complete: bool,
+    /// A torrent for this season was added in the last 7 days.
+    recently_downloaded: bool,
+    /// Next episode airs within the next 7 days.
+    airing_soon: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -37,6 +41,9 @@ struct MediaDashboardItem {
     /// Seasons rendered as chips: tracking + completed (ignored seasons are hidden).
     visible_seasons: Vec<SeasonDashboardInfo>,
     has_pending: bool,
+    /// Sort priority: higher = more interesting to the user right now.
+    /// 4 = downloading, 3 = pending, 2 = recently downloaded, 1 = airing soon, 0 = idle.
+    sort_priority: i32,
 }
 
 async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, AppError> {
@@ -45,8 +52,14 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
         let conn = pool.get()?;
         let media_list = queries::get_all_media(&conn)?;
         let mut items = Vec::new();
+        let now = Local::now();
+        // torrent.created_at format is "YYYY-MM-DD HH:MM:SS" (SQLite datetime('now'))
+        let recent_cutoff = (now - Duration::days(7))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let soon_cutoff = (now + Duration::days(7)).format("%Y-%m-%d").to_string();
         for media in media_list {
-            let today = Local::now().format("%Y-%m-%d").to_string();
+            let today = now.format("%Y-%m-%d").to_string();
             // Render chips for seasons the user is following or has finished.
             // Ignored seasons (older parts of a finished show, opt-out) stay hidden.
             let seasons: Vec<_> = queries::get_seasons_for_media(&conn, media.id)?
@@ -114,6 +127,14 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                 } else {
                     total > 0 && downloaded == total
                 };
+                let recently_downloaded = torrents.iter().any(|t| {
+                    t.season_number == Some(s.season_number)
+                        && t.created_at.as_str() >= recent_cutoff.as_str()
+                });
+                let airing_soon = next_air_date
+                    .as_deref()
+                    .map(|d| d <= soon_cutoff.as_str())
+                    .unwrap_or(false);
                 season_infos.push(SeasonDashboardInfo {
                     season_number: s.season_number,
                     title: s.title.clone(),
@@ -123,16 +144,29 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     pending,
                     next_air_date,
                     complete,
+                    recently_downloaded,
+                    airing_soon,
                 });
             }
+            let sort_priority = if season_infos.iter().any(|s| s.downloading) {
+                4
+            } else if season_infos.iter().any(|s| s.pending) {
+                3
+            } else if season_infos.iter().any(|s| s.recently_downloaded) {
+                2
+            } else if season_infos.iter().any(|s| s.airing_soon) {
+                1
+            } else {
+                0
+            };
             items.push(MediaDashboardItem {
                 media,
                 visible_seasons: season_infos,
                 has_pending: any_pending,
+                sort_priority,
             });
         }
-        // Sort: pending items first, then by creation date desc
-        items.sort_by_key(|b| std::cmp::Reverse(b.has_pending));
+        items.sort_by_key(|b| std::cmp::Reverse(b.sort_priority));
         Ok::<_, anyhow::Error>(items)
     })
     .await??;
