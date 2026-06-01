@@ -964,7 +964,7 @@ async fn delete_torrent_endpoint(
 
 /// Remove video files and their companion files (same stem, different extension)
 /// from the Plex library. Returns the set of parent directories for Plex scan.
-async fn remove_plex_files(video_paths: &[String]) -> std::collections::HashSet<String> {
+pub(crate) async fn remove_plex_files(video_paths: &[String]) -> std::collections::HashSet<String> {
     use std::path::Path;
     let mut scan_dirs = std::collections::HashSet::new();
 

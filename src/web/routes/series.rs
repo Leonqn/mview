@@ -343,6 +343,15 @@ async fn download_search_result(
         }
         tid
     } else {
+        // Downloading a different release for a season that may already have a
+        // torrent: supersede the old one(s) so the new release replaces it.
+        // Removes their Plex hardlinks, resets episode state, and deletes the
+        // old torrent rows (keeps them seeding in qBittorrent, like the default
+        // Delete action). The new release then organizes into the freed paths —
+        // organize_file skips existing destinations, so stale links must go first.
+        supersede_season_torrents(&state, form.media_id, season.season_number, &form.topic_id)
+            .await?;
+
         // Insert new torrent
         let torrent = crate::db::models::Torrent {
             id: 0,
@@ -391,6 +400,73 @@ async fn download_search_result(
     );
 
     render_season_partial(&state, season_id).await
+}
+
+/// Remove torrents for a season that are being replaced by a newly chosen
+/// release (any topic id other than `keep_topic_id`). Strips their Plex
+/// hardlinks, resets the season's episodes back to not-downloaded, deletes the
+/// old torrent rows, and triggers a Plex scan so the library re-indexes. The
+/// superseded torrents are left seeding in qBittorrent (matching the default
+/// Delete action; use Delete + Files to also remove the source).
+async fn supersede_season_torrents(
+    state: &Arc<AppState>,
+    media_id: i64,
+    season_number: i64,
+    keep_topic_id: &str,
+) -> Result<(), AppError> {
+    let keep = keep_topic_id.to_string();
+    let pool = state.db.clone();
+    // Find old torrents for this season, collect Plex paths of downloaded
+    // episodes, reset episode state, drop the season back to tracking, and
+    // delete the old torrent rows — all in one blocking DB pass.
+    let (removed, plex_paths): (usize, Vec<String>) = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        let old: Vec<_> = queries::get_torrents_for_media(&conn, media_id)?
+            .into_iter()
+            .filter(|t| t.season_number == Some(season_number) && t.rutracker_topic_id != keep)
+            .collect();
+        if old.is_empty() {
+            return Ok::<_, anyhow::Error>((0, Vec::new()));
+        }
+
+        let mut paths = Vec::new();
+        let seasons = queries::get_seasons_for_media(&conn, media_id)?;
+        if let Some(season) = seasons.iter().find(|s| s.season_number == season_number) {
+            for ep in queries::get_episodes_for_season(&conn, season.id)? {
+                if ep.downloaded {
+                    if let Some(path) = ep.file_path {
+                        paths.push(path);
+                    }
+                    queries::update_episode_downloaded(&conn, ep.id, false, None)?;
+                }
+            }
+            if season.status == "completed" {
+                queries::update_season_status(&conn, season.id, "tracking")?;
+            }
+        }
+
+        for t in &old {
+            queries::delete_torrent(&conn, t.id)?;
+        }
+        Ok((old.len(), paths))
+    })
+    .await??;
+
+    if removed == 0 {
+        return Ok(());
+    }
+
+    let scan_dirs = crate::web::routes::api::remove_plex_files(&plex_paths).await;
+    if !scan_dirs.is_empty() {
+        let dirs: Vec<String> = scan_dirs.into_iter().collect();
+        crate::plex::client::scan(state, &dirs).await;
+    }
+
+    info!(
+        media_id,
+        season_number, removed, "superseded old season torrents for new release"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
