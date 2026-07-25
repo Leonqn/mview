@@ -85,7 +85,8 @@ async fn search_missing_torrents(state: &Arc<AppState>) -> Result<()> {
                     .map(|p| (p as i64) + 1)
                     .unwrap_or(1);
 
-                results.push((media.clone(), season.clone(), tv_num));
+                let season_year = search::season_air_year(&episodes);
+                results.push((media.clone(), season.clone(), tv_num, season_year));
             }
         }
 
@@ -103,8 +104,9 @@ async fn search_missing_torrents(state: &Arc<AppState>) -> Result<()> {
         "searching torrents for tracked seasons"
     );
 
-    for (media, season, tv_num) in &candidates {
-        if let Err(error) = search_single_season(state, media, season, *tv_num).await {
+    for (media, season, tv_num, season_year) in &candidates {
+        if let Err(error) = search_single_season(state, media, season, *tv_num, *season_year).await
+        {
             error!(
                 title = media.title,
                 season = season.season_number,
@@ -122,8 +124,9 @@ async fn search_single_season(
     media: &crate::db::models::Media,
     season: &crate::db::models::Season,
     tv_season_number: i64,
+    season_year: Option<i64>,
 ) -> Result<()> {
-    let sq = search::build_queries(media, season, tv_season_number);
+    let sq = search::build_queries(media, season, tv_season_number, season_year);
 
     // Only use primary queries (TV-N/ТВ-N), no fallback
     let queries = &sq.primary;

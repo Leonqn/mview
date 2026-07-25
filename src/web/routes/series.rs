@@ -524,7 +524,7 @@ async fn search_season(
 ) -> Result<Html<String>, AppError> {
     let force_broad = matches!(form.broad.as_deref(), Some("1" | "true" | "on" | "yes"));
     let pool = state.db.clone();
-    let (season, media, tv_season_number) = tokio::task::spawn_blocking(move || {
+    let (season, media, tv_season_number, season_year) = tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
         let season = queries::get_season(&conn, season_id)?
             .ok_or_else(|| anyhow::anyhow!("season not found"))?;
@@ -538,11 +538,13 @@ async fn search_season(
             .position(|s| s.id == season.id)
             .map(|p| (p as i64) + 1)
             .unwrap_or(1);
-        Ok::<_, anyhow::Error>((season, media, tv_num))
+        let episodes = queries::get_episodes_for_season(&conn, season.id)?;
+        let season_year = crate::search::season_air_year(&episodes);
+        Ok::<_, anyhow::Error>((season, media, tv_num, season_year))
     })
     .await??;
 
-    let sq = crate::search::build_queries(&media, &season, tv_season_number);
+    let sq = crate::search::build_queries(&media, &season, tv_season_number, season_year);
 
     info!(
         season_id,
