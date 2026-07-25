@@ -113,11 +113,10 @@ async fn discover_results(
 
     let results = interleave_results(anilist_items, tmdb_items);
 
-    let tmpl = state.templates.get_template("search_results.html")?;
+    let tmpl = state.templates.get_template("discover_results.html")?;
     let html = tmpl.render(minijinja::context! {
         results => results,
         errors => errors,
-        query => "",
     })?;
     Ok(Html(html))
 }
