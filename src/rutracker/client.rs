@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use tracing::warn;
 
 use super::auth::AuthHandle;
+use super::flaresolverr::is_cf_challenge;
 
 /// RuTracker HTTP client with channel-based authentication.
 /// Uses the shared reqwest::Client from AuthHandle — cookies and connections are reused.
@@ -17,58 +18,42 @@ impl RutrackerClient {
     }
 
     /// Perform an authenticated GET request. If the response indicates
-    /// a redirect to the login page (session expired), re-authenticate and retry once.
+    /// a redirect to the login page (session expired) or a cloudflare
+    /// challenge (clearance expired), re-authenticate and retry once.
     pub async fn get(&self, url: &str) -> Result<String> {
-        self.auth.ensure_authenticated().await?;
-        let client = self.auth.client();
-
-        let resp = client
-            .get(url)
-            .send()
-            .await
-            .context("failed to send GET request")?;
-
-        if self.is_login_redirect(&resp) {
-            warn!("session expired, re-authenticating");
-            self.auth.invalidate();
-            self.auth.ensure_authenticated().await?;
-            let resp = client
-                .get(url)
-                .send()
-                .await
-                .context("failed to send GET request after re-auth")?;
-            return resp
-                .text()
-                .await
-                .context("failed to read response body after re-auth");
-        }
-
+        let resp = self.get_response(url).await?;
         resp.text().await.context("failed to read response body")
     }
 
     /// Perform an authenticated GET request returning the raw response.
     pub async fn get_response(&self, url: &str) -> Result<reqwest::Response> {
         self.auth.ensure_authenticated().await?;
-        let client = self.auth.client();
 
-        let resp = client
-            .get(url)
-            .send()
+        let resp = self
+            .send_get(url)
             .await
             .context("failed to send GET request")?;
 
-        if self.is_login_redirect(&resp) {
-            warn!("session expired on download, re-authenticating");
+        if self.is_login_redirect(&resp) || is_cf_challenge(&resp) {
+            warn!("session or cloudflare clearance expired, re-authenticating");
             self.auth.invalidate();
             self.auth.ensure_authenticated().await?;
-            return client
-                .get(url)
-                .send()
+            return self
+                .send_get(url)
                 .await
                 .context("failed to send GET request after re-auth");
         }
 
         Ok(resp)
+    }
+
+    async fn send_get(&self, url: &str) -> reqwest::Result<reqwest::Response> {
+        self.auth
+            .client()
+            .get(url)
+            .header(reqwest::header::USER_AGENT, self.auth.user_agent())
+            .send()
+            .await
     }
 
     /// Check if a response is a redirect to the login page.

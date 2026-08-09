@@ -270,6 +270,7 @@ mod tests {
                 url: "http://127.0.0.1:19999".to_string(),
                 username: "user".to_string(),
                 password: "pass".to_string(),
+                flaresolverr_url: None,
             },
             qbittorrent: QbittorrentConfig {
                 url: "http://localhost:8080".to_string(),

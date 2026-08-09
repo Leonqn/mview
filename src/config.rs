@@ -41,6 +41,10 @@ pub struct RutrackerConfig {
     pub url: String,
     pub username: String,
     pub password: String,
+    /// FlareSolverr endpoint (e.g. "http://flaresolverr:8191") used to pass
+    /// Cloudflare JS challenges. Optional — without it a challenge is a hard error.
+    #[serde(default)]
+    pub flaresolverr_url: Option<String>,
 }
 
 impl fmt::Debug for RutrackerConfig {
@@ -49,6 +53,7 @@ impl fmt::Debug for RutrackerConfig {
             .field("url", &self.url)
             .field("username", &self.username)
             .field("password", &"[REDACTED]")
+            .field("flaresolverr_url", &self.flaresolverr_url)
             .finish()
     }
 }

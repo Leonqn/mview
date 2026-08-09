@@ -4,6 +4,9 @@
 url = "https://rutracker.org"
 username = "your_username"
 password = "your_password"
+# Optional: FlareSolverr endpoint for solving Cloudflare challenges.
+# Required when rutracker enables its anti-DDoS JS challenge ("Just a moment...").
+flaresolverr_url = "http://flaresolverr:8191"
 
 [qbittorrent]
 url = "http://qbittorrent:8080"

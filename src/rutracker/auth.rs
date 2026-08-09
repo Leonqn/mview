@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use reqwest::cookie::CookieStore;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
@@ -9,10 +9,16 @@ use tracing::{debug, error, info, warn};
 use crate::config::RutrackerConfig;
 
 use super::client::{extract_captcha_sid, extract_captcha_url};
+use super::flaresolverr;
 
 const LOGIN_PATH: &str = "/forum/login.php";
 const CAPTCHA_TIMEOUT: Duration = Duration::from_secs(300);
-const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+// Generous: login may go through a FlareSolverr challenge solve (up to 60s).
+const AUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Default UA until FlareSolverr tells us the one its browser used —
+/// cf_clearance is only valid together with that exact user agent.
+const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 /// Result of an auth request.
 pub type AuthResult = Result<(), String>;
@@ -42,6 +48,7 @@ pub struct CaptchaForWeb {
 pub struct AuthHandle {
     auth_tx: mpsc::Sender<AuthMessage>,
     http_client: reqwest::Client,
+    user_agent: Arc<StdRwLock<String>>,
     pub captcha_state: Arc<RwLock<Option<CaptchaForWeb>>>,
 }
 
@@ -80,12 +87,22 @@ impl AuthHandle {
     pub fn client(&self) -> &reqwest::Client {
         &self.http_client
     }
+
+    /// User agent to send with every rutracker request. After a FlareSolverr
+    /// solve this must match the browser FlareSolverr used, or cf_clearance is rejected.
+    pub fn user_agent(&self) -> String {
+        self.user_agent
+            .read()
+            .expect("user agent lock poisoned")
+            .clone()
+    }
 }
 
 /// Internal state for the auth task.
 struct AuthTaskState {
     http_client: reqwest::Client,
     cookie_jar: Arc<reqwest::cookie::Jar>,
+    user_agent: Arc<StdRwLock<String>>,
     config: Arc<RutrackerConfig>,
     base_url: String,
     authenticated: bool,
@@ -114,9 +131,12 @@ pub fn spawn_auth_task(config: Arc<RutrackerConfig>) -> AuthHandle {
         .build()
         .expect("failed to create http client");
 
+    let user_agent = Arc::new(StdRwLock::new(DEFAULT_USER_AGENT.to_string()));
+
     let handle = AuthHandle {
         auth_tx,
         http_client: http_client.clone(),
+        user_agent: user_agent.clone(),
         captcha_state: captcha_state.clone(),
     };
 
@@ -125,6 +145,7 @@ pub fn spawn_auth_task(config: Arc<RutrackerConfig>) -> AuthHandle {
     let state = AuthTaskState {
         http_client,
         cookie_jar,
+        user_agent,
         config,
         base_url,
         authenticated: false,
@@ -210,15 +231,7 @@ async fn start_login(state: &mut AuthTaskState) {
 
     let body = build_login_form(&state.config.username, &state.config.password, None);
 
-    let resp = match state
-        .http_client
-        .post(&login_url)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("Referer", &login_url)
-        .body(body)
-        .send()
-        .await
-    {
+    let mut resp = match post_login(state, &login_url, &body).await {
         Ok(r) => r,
         Err(error) => {
             error!(?error, "login request failed");
@@ -230,6 +243,31 @@ async fn start_login(state: &mut AuthTaskState) {
             return;
         }
     };
+
+    if flaresolverr::is_cf_challenge(&resp) {
+        warn!("login blocked by cloudflare challenge");
+        if let Err(error) = solve_cf_challenge(state, &login_url).await {
+            error!(?error, "cloudflare challenge solve failed");
+            state.login_in_progress = false;
+            drain_waiters(
+                &mut state.waiters,
+                Err(format!("cloudflare challenge not solved: {error:#}")),
+            );
+            return;
+        }
+        resp = match post_login(state, &login_url, &body).await {
+            Ok(r) => r,
+            Err(error) => {
+                error!(?error, "login request failed after challenge solve");
+                state.login_in_progress = false;
+                drain_waiters(
+                    &mut state.waiters,
+                    Err(format!("login request failed: {error}")),
+                );
+                return;
+            }
+        };
+    }
 
     let status = resp.status();
 
@@ -284,6 +322,72 @@ async fn start_login(state: &mut AuthTaskState) {
     );
 }
 
+/// POST the login form with the current user agent.
+async fn post_login(
+    state: &AuthTaskState,
+    login_url: &str,
+    body: &str,
+) -> reqwest::Result<reqwest::Response> {
+    state
+        .http_client
+        .post(login_url)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Referer", login_url)
+        .header(reqwest::header::USER_AGENT, current_user_agent(state))
+        .body(body.to_string())
+        .send()
+        .await
+}
+
+fn current_user_agent(state: &AuthTaskState) -> String {
+    state
+        .user_agent
+        .read()
+        .expect("user agent lock poisoned")
+        .clone()
+}
+
+/// Solve the Cloudflare challenge via FlareSolverr and store the clearance
+/// cookies + browser user agent for all subsequent requests.
+async fn solve_cf_challenge(state: &mut AuthTaskState, target_url: &str) -> Result<()> {
+    let Some(fs_url) = state.config.flaresolverr_url.as_deref() else {
+        anyhow::bail!(
+            "rutracker is behind a cloudflare challenge and flaresolverr_url is not configured"
+        );
+    };
+
+    info!(
+        flaresolverr_url = fs_url,
+        "solving cloudflare challenge via flaresolverr"
+    );
+    let solution = flaresolverr::solve(fs_url, target_url).await?;
+
+    let base = state
+        .base_url
+        .parse::<reqwest::Url>()
+        .context("invalid base url")?;
+    let host = base.host_str().unwrap_or_default().to_string();
+
+    let cookie_count = solution.cookies.len();
+    for cookie in &solution.cookies {
+        let domain = if cookie.domain.is_empty() {
+            host.as_str()
+        } else {
+            cookie.domain.as_str()
+        };
+        let cookie_str = format!(
+            "{}={}; Domain={}; Path=/",
+            cookie.name, cookie.value, domain
+        );
+        state.cookie_jar.add_cookie_str(&cookie_str, &base);
+    }
+
+    *state.user_agent.write().expect("user agent lock poisoned") = solution.user_agent;
+
+    info!(cookies = cookie_count, "cloudflare challenge solved");
+    Ok(())
+}
+
 async fn handle_captcha_required(state: &mut AuthTaskState, body: &str) {
     let captcha_url = match extract_captcha_url(body, &state.base_url) {
         Some(url) => url,
@@ -300,7 +404,13 @@ async fn handle_captcha_required(state: &mut AuthTaskState, body: &str) {
 
     let cap_sid = extract_captcha_sid(body).unwrap_or_default();
 
-    let image_data = match state.http_client.get(&captcha_url).send().await {
+    let image_data = match state
+        .http_client
+        .get(&captcha_url)
+        .header(reqwest::header::USER_AGENT, current_user_agent(state))
+        .send()
+        .await
+    {
         Ok(r) => match r.bytes().await {
             Ok(b) => b.to_vec(),
             Err(error) => {
@@ -350,15 +460,7 @@ async fn submit_captcha_login(
         Some((&pending.cap_sid, code)),
     );
 
-    let resp = match state
-        .http_client
-        .post(&login_url)
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("Referer", &login_url)
-        .body(body)
-        .send()
-        .await
-    {
+    let resp = match post_login(state, &login_url, &body).await {
         Ok(r) => r,
         Err(error) => {
             let msg = format!("login with captcha failed: {error}");
@@ -443,7 +545,8 @@ fn drain_waiters(waiters: &mut Vec<oneshot::Sender<AuthResult>>, result: AuthRes
     }
 }
 
-/// Check if the cookie jar has a session cookie for the forum.
+/// Check if the cookie jar has the rutracker session cookie for the forum.
+/// The jar may also hold cloudflare clearance cookies, so look for bb_session specifically.
 fn has_session_cookie(state: &AuthTaskState) -> bool {
     let url = format!("{}/forum/", state.base_url)
         .parse::<reqwest::Url>()
@@ -451,7 +554,7 @@ fn has_session_cookie(state: &AuthTaskState) -> bool {
     state
         .cookie_jar
         .cookies(&url)
-        .and_then(|h| h.to_str().ok().map(|s| !s.is_empty()))
+        .and_then(|h| h.to_str().ok().map(|s| s.contains("bb_session")))
         .unwrap_or(false)
 }
 
@@ -464,6 +567,7 @@ mod tests {
             url: "https://rutracker.org".to_string(),
             username: "test".to_string(),
             password: "test".to_string(),
+            flaresolverr_url: None,
         })
     }
 
@@ -494,6 +598,7 @@ mod tests {
             url: "http://127.0.0.1:19999".to_string(),
             username: "test".to_string(),
             password: "test".to_string(),
+            flaresolverr_url: None,
         });
         let handle = spawn_auth_task(config);
         let result = handle.ensure_authenticated().await;
@@ -529,6 +634,7 @@ mod tests {
         let handle = AuthHandle {
             auth_tx: tx,
             http_client: reqwest::Client::new(),
+            user_agent: Arc::new(StdRwLock::new(DEFAULT_USER_AGENT.to_string())),
             captcha_state: Arc::new(RwLock::new(None)),
         };
         drop(_rx);
