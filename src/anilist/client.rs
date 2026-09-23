@@ -90,6 +90,7 @@ query ($id: Int!) {
         format
         status
         description
+        averageScore
         coverImage { large }
         airingSchedule(perPage: 50) {
             nodes { episode airingAt }
@@ -381,6 +382,7 @@ mod tests {
             status: Some("FINISHED".into()),
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: Vec::new(),
             relations,
@@ -451,6 +453,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: Vec::new(),
             relations: Some(AniListRelations {
@@ -481,6 +484,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: Vec::new(),
             relations: Some(AniListRelations {
@@ -511,6 +515,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: Vec::new(),
             relations: Some(AniListRelations {

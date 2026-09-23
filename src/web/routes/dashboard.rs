@@ -6,8 +6,9 @@ use axum::response::Html;
 use axum::routing::get;
 use serde::Serialize;
 
-use chrono::{Datelike, Duration, Local};
+use chrono::{Datelike, Local, NaiveDate};
 
+use crate::db::models::Media;
 use crate::db::queries;
 use crate::error::AppError;
 use crate::web::AppState;
@@ -26,40 +27,99 @@ struct SeasonDashboardInfo {
     pending: bool,
     /// Earliest future episode air_date for this season (YYYY-MM-DD), if known.
     next_air_date: Option<String>,
-    /// Season is fully downloaded (status == "completed" or every aired ep is on disk).
+    /// Season is fully downloaded (every aired ep is on disk).
     complete: bool,
-    /// A torrent for this season was added in the last 7 days.
-    recently_downloaded: bool,
-    /// Next episode airs within the next 7 days.
-    airing_soon: bool,
+    /// Some episodes aired, more are still to come (dated or TBA).
+    in_progress: bool,
+    /// Nothing has aired yet: an announced future season / unreleased film.
+    announced: bool,
+    /// Aired episodes are missing and no torrent covers the season.
+    missing: bool,
 }
 
 #[derive(Debug, Serialize)]
 struct MediaDashboardItem {
     #[serde(flatten)]
-    media: crate::db::models::Media,
+    media: Media,
     /// Seasons rendered as chips: tracking + completed (ignored seasons are hidden).
     visible_seasons: Vec<SeasonDashboardInfo>,
     has_pending: bool,
-    /// Sort priority: higher = more interesting to the user right now.
-    /// 4 = downloading, 3 = pending, 2 = recently downloaded, 1 = airing soon, 0 = idle.
-    sort_priority: i32,
+    /// Dashboard section key, see [`GROUPS`].
+    group: &'static str,
+    /// One-line human summary of why the item sits in its group.
+    status_line: String,
+    /// Earliest future air date across visible seasons.
+    next_date: Option<String>,
+    /// `next_date` is within the next 30 days.
+    soon: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DashboardGroup {
+    key: &'static str,
+    label: &'static str,
+    hint: &'static str,
+    items: Vec<MediaDashboardItem>,
+}
+
+/// Dashboard sections in display order: (key, label, hint).
+const GROUPS: [(&str, &str, &str); 7] = [
+    (
+        "downloading",
+        "Downloading",
+        "qBittorrent is pulling these right now",
+    ),
+    (
+        "found",
+        "Found on rutracker",
+        "a torrent turned up — pick one to download",
+    ),
+    (
+        "airing",
+        "Airing now",
+        "waiting for new episodes of the current season",
+    ),
+    (
+        "missing",
+        "Not found yet",
+        "aired episodes are missing, nothing on rutracker so far",
+    ),
+    ("upcoming", "Upcoming", "a new season or film is announced"),
+    (
+        "waiting",
+        "Waiting for a new season",
+        "everything downloaded, the show is still running",
+    ),
+    (
+        "complete",
+        "Complete",
+        "everything downloaded, nothing more expected",
+    ),
+];
+
+const SOON_DAYS: i64 = 30;
+
+/// "in 3 days" / "in 2 months" style relative label for a future date.
+fn relative_days(days: i64) -> String {
+    match days {
+        d if d <= 1 => "tomorrow".to_string(),
+        d if d < 45 => format!("in {d} days"),
+        d if d < 365 => format!("in {} months", (d + 15) / 30),
+        d => format!("in {} years", (d + 182) / 365),
+    }
 }
 
 async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, AppError> {
     let pool = state.db.clone();
-    let items = tokio::task::spawn_blocking(move || {
+    let groups = tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
         let media_list = queries::get_all_media(&conn)?;
-        let mut items = Vec::new();
         let now = Local::now();
-        // torrent.created_at format is "YYYY-MM-DD HH:MM:SS" (SQLite datetime('now'))
-        let recent_cutoff = (now - Duration::days(7))
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-        let soon_cutoff = (now + Duration::days(7)).format("%Y-%m-%d").to_string();
+        let today_date = now.date_naive();
+        let today = today_date.format("%Y-%m-%d").to_string();
+        let current_year = now.year();
+        let mut items = Vec::new();
         for media in media_list {
-            let today = now.format("%Y-%m-%d").to_string();
             // Render chips for seasons the user is following or has finished.
             // Ignored seasons (older parts of a finished show, opt-out) stay hidden.
             let seasons: Vec<_> = queries::get_seasons_for_media(&conn, media.id)?
@@ -69,16 +129,14 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
             let torrents = queries::get_torrents_for_media(&conn, media.id)?;
             let season_ids: Vec<i64> = seasons.iter().map(|s| s.id).collect();
             let search_cache = queries::get_search_cache_for_seasons(&conn, &season_ids)?;
+            let is_movie = media.media_type == "movie";
+            let media_released = media
+                .year
+                .map(|y| y <= current_year as i64)
+                .unwrap_or(false);
             let mut season_infos = Vec::new();
-            let mut any_pending = false;
-            let current_year = Local::now().year();
             for s in &seasons {
                 let episodes = queries::get_episodes_for_season(&conn, s.id).unwrap_or_default();
-                let media_released = media
-                    .year
-                    .map(|y| y <= current_year as i64)
-                    .unwrap_or(false);
-                let is_movie = media.media_type == "movie";
                 let aired: Vec<_> = episodes
                     .iter()
                     .filter(|e| {
@@ -99,6 +157,10 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     .collect();
                 let downloaded = aired.iter().filter(|e| e.downloaded).count();
                 let total = aired.len();
+                // Episodes the source knows about, aired or not.
+                let known_total = episodes
+                    .len()
+                    .max(s.episode_count.unwrap_or(0).max(0) as usize);
                 let has_torrent = torrents
                     .iter()
                     .any(|t| t.season_number == Some(s.season_number));
@@ -108,10 +170,8 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                         && t.qbt_hash.is_some()
                 });
                 let search_found = search_cache.iter().any(|c| c.season_id == s.id);
-                let pending = downloaded < total && search_found && !has_torrent;
-                if pending {
-                    any_pending = true;
-                }
+                let missing = downloaded < total && !has_torrent;
+                let pending = missing && search_found;
                 let next_air_date = episodes
                     .iter()
                     .filter_map(|e| e.air_date.as_deref())
@@ -127,14 +187,8 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                 } else {
                     total > 0 && downloaded == total
                 };
-                let recently_downloaded = torrents.iter().any(|t| {
-                    t.season_number == Some(s.season_number)
-                        && t.created_at.as_str() >= recent_cutoff.as_str()
-                });
-                let airing_soon = next_air_date
-                    .as_deref()
-                    .map(|d| d <= soon_cutoff.as_str())
-                    .unwrap_or(false);
+                let in_progress = !is_movie && total > 0 && total < known_total;
+                let announced = total == 0;
                 season_infos.push(SeasonDashboardInfo {
                     season_number: s.season_number,
                     title: s.title.clone(),
@@ -144,35 +198,120 @@ async fn dashboard(State(state): State<Arc<AppState>>) -> Result<Html<String>, A
                     pending,
                     next_air_date,
                     complete,
-                    recently_downloaded,
-                    airing_soon,
+                    in_progress,
+                    announced,
+                    missing,
                 });
             }
-            let sort_priority = if season_infos.iter().any(|s| s.downloading) {
-                4
-            } else if season_infos.iter().any(|s| s.pending) {
-                3
-            } else if season_infos.iter().any(|s| s.recently_downloaded) {
-                2
-            } else if season_infos.iter().any(|s| s.airing_soon) {
-                1
-            } else {
-                0
+
+            let next_date = season_infos
+                .iter()
+                .filter_map(|s| s.next_air_date.clone())
+                .min();
+            let days_until = next_date
+                .as_deref()
+                .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
+                .map(|d| (d - today_date).num_days());
+            let soon = days_until.map(|d| d <= SOON_DAYS).unwrap_or(false);
+            let ended = is_movie || media.source_status.as_deref() == Some("ended");
+            let has_pending = season_infos.iter().any(|s| s.pending);
+            let missing_eps: usize = season_infos
+                .iter()
+                .filter(|s| s.missing)
+                .map(|s| s.total - s.downloaded)
+                .sum();
+            let when = |d: Option<&str>| match (d, days_until) {
+                (Some(date), Some(days)) => format!("{date} ({})", relative_days(days)),
+                (Some(date), None) => date.to_string(),
+                (None, _) => "date TBA".to_string(),
             };
+
+            let (group, status_line) = if season_infos.iter().any(|s| s.downloading) {
+                ("downloading", "downloading".to_string())
+            } else if has_pending {
+                ("found", "torrents found on rutracker".to_string())
+            } else if season_infos.iter().any(|s| s.in_progress) {
+                let line = match next_date.as_deref() {
+                    Some(_) => format!("airing · next episode {}", when(next_date.as_deref())),
+                    None => "airing · next episode date TBA".to_string(),
+                };
+                ("airing", line)
+            } else if missing_eps > 0 {
+                let line = if is_movie {
+                    "released, nothing on rutracker yet".to_string()
+                } else {
+                    format!("{missing_eps} episodes missing, nothing on rutracker yet")
+                };
+                ("missing", line)
+            } else if next_date.is_some() || season_infos.iter().any(|s| s.announced) {
+                let announced = season_infos
+                    .iter()
+                    .find(|s| s.announced)
+                    .or_else(|| season_infos.iter().find(|s| s.next_air_date.is_some()));
+                let what = match (is_movie, announced) {
+                    (true, _) => "releases".to_string(),
+                    (false, Some(s)) => format!("Season {} airs", s.season_number),
+                    (false, None) => "next episode".to_string(),
+                };
+                ("upcoming", format!("{what} {}", when(next_date.as_deref())))
+            } else if ended {
+                let line = if is_movie {
+                    "downloaded".to_string()
+                } else {
+                    "ended · all downloaded".to_string()
+                };
+                ("complete", line)
+            } else {
+                (
+                    "waiting",
+                    "all downloaded · waiting for a new season".to_string(),
+                )
+            };
+
             items.push(MediaDashboardItem {
                 media,
                 visible_seasons: season_infos,
-                has_pending: any_pending,
-                sort_priority,
+                has_pending,
+                group,
+                status_line,
+                next_date,
+                soon,
             });
         }
-        items.sort_by_key(|b| std::cmp::Reverse(b.sort_priority));
-        Ok::<_, anyhow::Error>(items)
+
+        // Inside a group: things happening sooner first, then by title.
+        items.sort_by(|a, b| {
+            let da = a.next_date.as_deref().unwrap_or("9999");
+            let db = b.next_date.as_deref().unwrap_or("9999");
+            da.cmp(db).then_with(|| {
+                a.media
+                    .title
+                    .to_lowercase()
+                    .cmp(&b.media.title.to_lowercase())
+            })
+        });
+
+        let mut groups: Vec<DashboardGroup> = GROUPS
+            .iter()
+            .map(|(key, label, hint)| DashboardGroup {
+                key,
+                label,
+                hint,
+                items: Vec::new(),
+            })
+            .collect();
+        for item in items {
+            if let Some(g) = groups.iter_mut().find(|g| g.key == item.group) {
+                g.items.push(item);
+            }
+        }
+        groups.retain(|g| !g.items.is_empty());
+        Ok::<_, anyhow::Error>(groups)
     })
     .await??;
 
     let tmpl = state.templates.get_template("dashboard.html")?;
-    let html = tmpl.render(minijinja::context! { media => items })?;
+    let html = tmpl.render(minijinja::context! { groups => groups })?;
     Ok(Html(html))
 }
 
@@ -328,6 +467,8 @@ anime_dir = "/tmp/anime"
                     overview: None,
                     anilist_id: None,
                     status: "tracking".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -375,6 +516,8 @@ anime_dir = "/tmp/anime"
                     overview: None,
                     anilist_id: None,
                     status: "tracking".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -448,5 +591,85 @@ anime_dir = "/tmp/anime"
         assert!(body_str.contains("S1"));
         assert!(body_str.contains("S3"));
         assert!(!body_str.contains("S2"));
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_groups_by_show_status() {
+        let state = build_test_state();
+
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get().unwrap();
+            let mk = |title: &str, source_status: &str| crate::db::models::Media {
+                id: 0,
+                media_type: "series".to_string(),
+                title: title.to_string(),
+                title_original: None,
+                year: Some(2020),
+                tmdb_id: None,
+                imdb_id: None,
+                kinopoisk_url: None,
+                world_art_url: None,
+                poster_url: None,
+                overview: None,
+                anilist_id: None,
+                status: "tracking".to_string(),
+                rating: Some(8.4),
+                source_status: Some(source_status.to_string()),
+                created_at: String::new(),
+                updated_at: String::new(),
+            };
+            for (title, status) in [("Ended Show", "ended"), ("Ongoing Show", "returning")] {
+                let media_id = queries::insert_media(&conn, &mk(title, status)).unwrap();
+                let season_id = queries::insert_season(
+                    &conn,
+                    &crate::db::models::Season {
+                        id: 0,
+                        media_id,
+                        season_number: 1,
+                        title: None,
+                        episode_count: Some(1),
+                        anilist_id: None,
+                        format: None,
+                        status: "tracking".to_string(),
+                        created_at: String::new(),
+                    },
+                )
+                .unwrap();
+                queries::insert_episode(
+                    &conn,
+                    &crate::db::models::Episode {
+                        id: 0,
+                        season_id,
+                        episode_number: 1,
+                        title: None,
+                        air_date: Some("2020-01-01".to_string()),
+                        downloaded: true,
+                        file_path: None,
+                    },
+                )
+                .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+
+        let app = web::build_router(state);
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        let complete_idx = body_str.find("ended · all downloaded").unwrap();
+        let waiting_idx = body_str.find("waiting for a new season").unwrap();
+        assert!(body_str.contains("Waiting for a new season"));
+        assert!(body_str.contains(">Complete"));
+        // Ended show sits in the later "Complete" section, ongoing one before it.
+        assert!(waiting_idx < complete_idx);
+        assert!(body_str.contains("★ 8.4"));
     }
 }

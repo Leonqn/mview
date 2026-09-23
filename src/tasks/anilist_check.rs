@@ -80,6 +80,19 @@ async fn check_single_anime(state: &Arc<AppState>, media: &crate::db::models::Me
 
     let chain = state.anilist.get_sequel_chain(anilist_id).await?;
 
+    // Keep rating / show status fresh — the dashboard groups on them.
+    {
+        let entry = chain.iter().find(|m| m.id == anilist_id).or(chain.first());
+        let rating = crate::anilist::models::rating_from_score(entry.and_then(|m| m.average_score));
+        let source_status = crate::anilist::models::chain_source_status(&chain);
+        let pool = state.db.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            queries::update_media_meta(&conn, media_id, rating, source_status.as_deref())
+        })
+        .await??;
+    }
+
     let next_season_number = db_seasons
         .iter()
         .map(|s| s.season_number)

@@ -62,7 +62,7 @@
         {% if media.overview %}
         <p>{{ media.overview }}</p>
         {% endif %}
-        <p><small>{{ media.media_type | capitalize }} &mdash; {{ media.status | capitalize }}</small></p>
+        <p><small>{{ media.media_type | capitalize }} &mdash; {{ media.status | capitalize }}{% if media.source_status == "ended" %} &mdash; Ended{% elif media.source_status == "returning" %} &mdash; Ongoing{% endif %}{% if media.rating %} &mdash; <span title="rating" style="color:#d9a400;font-weight:600;">★ {{ media.rating | round(1) }}</span>{% endif %}</small></p>
 
         <nav>
             {% if media.tmdb_id %}

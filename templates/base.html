@@ -33,5 +33,24 @@
     <main class="container">
         {% block content %}{% endblock %}
     </main>
+    <script>
+    // Busy state for every htmx-triggering button: Pico renders a spinner for
+    // aria-busy, and disabling prevents double submits while the request runs.
+    document.addEventListener('htmx:beforeRequest', e => {
+        const el = e.detail.elt;
+        if (el && el.matches && el.matches('button, [role="button"]')) {
+            el.setAttribute('aria-busy', 'true');
+            el.dataset.busyLabel = el.textContent;
+            el.disabled = true;
+        }
+    });
+    document.addEventListener('htmx:afterRequest', e => {
+        const el = e.detail.elt;
+        if (el && el.hasAttribute && el.hasAttribute('aria-busy')) {
+            el.removeAttribute('aria-busy');
+            el.disabled = false;
+        }
+    });
+    </script>
 </body>
 </html>

@@ -869,6 +869,8 @@ mod tests {
             overview: None,
             anilist_id: None,
             status: "tracking".to_string(),
+            rating: None,
+            source_status: None,
             created_at: String::new(),
             updated_at: String::new(),
         };

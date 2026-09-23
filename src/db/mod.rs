@@ -144,6 +144,23 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
     )
     .with_context(|| "Failed to run search_cache migration")?;
 
+    // Migration: source rating + normalized show status on media
+    add_column_if_missing(conn, "media", "rating", "REAL")?;
+    add_column_if_missing(conn, "media", "source_status", "TEXT")?;
+
+    Ok(())
+}
+
+fn add_column_if_missing(conn: &Connection, table: &str, column: &str, decl: &str) -> Result<()> {
+    let exists = conn
+        .prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .any(|name| name == column);
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))
+            .with_context(|| format!("Failed to add column {table}.{column}"))?;
+    }
     Ok(())
 }
 

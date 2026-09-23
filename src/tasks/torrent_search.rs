@@ -141,14 +141,41 @@ async fn search_single_season(
     let futures: Vec<_> = queries.iter().map(|q| state.rutracker.search(q)).collect();
     let results = futures::future::join_all(futures).await;
 
+    // rutracker treats "-" as a separator, so "Title TV-5 2015" also returns
+    // packs of seasons 1-4. Only count releases that plausibly hold this season,
+    // otherwise we'd notify "torrents found" for old seasons.
+    let expected = search::expected_season_numbers(season, tv_season_number);
+    let mut seen = std::collections::HashSet::new();
     let mut total_count: i64 = 0;
+    let mut dropped: i64 = 0;
     for result in results {
         match result {
-            Ok(r) => total_count += r.len() as i64,
+            Ok(r) => {
+                for sr in r {
+                    if !seen.insert(sr.topic_id.clone()) {
+                        continue;
+                    }
+                    if search::title_matches_season(&sr.title, &expected, season_year) {
+                        total_count += 1;
+                    } else {
+                        dropped += 1;
+                        debug!(title = %sr.title, "auto-search result rejected: other season");
+                    }
+                }
+            }
             Err(error) => {
                 warn!(?error, "rutracker auto-search failed");
             }
         }
+    }
+    if dropped > 0 {
+        info!(
+            media_title = media.title,
+            season = season.season_number,
+            matched = total_count,
+            dropped,
+            "auto-search results filtered by season"
+        );
     }
 
     // Update search cache

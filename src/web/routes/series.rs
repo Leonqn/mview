@@ -623,16 +623,7 @@ async fn search_season(
     Ok(Html(html))
 }
 
-/// Extract a "TV-N" or "ТВ-N" marker from a string, returning the number.
-/// Case-insensitive, supports optional space/dash between "TV" and the number.
-fn extract_season_marker(s: &str) -> Option<i64> {
-    use std::sync::LazyLock;
-    static RE: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"(?i)\b(?:TV|ТВ)[-\s]?(\d+)").unwrap());
-    RE.captures(s)
-        .and_then(|c| c.get(1))
-        .and_then(|m| m.as_str().parse::<i64>().ok())
-}
+use crate::search::extract_season_marker;
 
 /// Drop rutracker results that mention a different TV-N / ТВ-N marker than the query.
 /// If the query has no season marker, all results pass through.
@@ -768,6 +759,8 @@ anime_dir = "/tmp/anime"
             overview: Some("A chemistry teacher turned meth kingpin".to_string()),
             anilist_id: None,
             status: "tracking".to_string(),
+            rating: None,
+            source_status: None,
             created_at: String::new(),
             updated_at: String::new(),
         };

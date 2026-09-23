@@ -119,6 +119,103 @@ pub fn build_queries(
     }
 }
 
+/// Extract a "TV-N" or "ТВ-N" marker from a string, returning the number.
+/// Case-insensitive, supports optional space/dash between "TV" and the number.
+pub fn extract_season_marker(s: &str) -> Option<i64> {
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)\b(?:TV|ТВ)[-\s]?(\d+)").unwrap());
+    RE.captures(s)
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse::<i64>().ok())
+}
+
+/// Every season number a rutracker title explicitly claims, with ranges
+/// expanded ("Сезоны: 1-5" → 1..=5). Empty when the title has no season
+/// marker at all (single-season shows, films, episode-only releases).
+pub fn title_season_numbers(title: &str) -> Vec<i64> {
+    static PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+        [
+            // "Сезон: 5", "Сезоны 1-5", "сезон 3"
+            r"(?i)сезон(?:ы)?:?\s*(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?",
+            // "5 сезон", "5-й сезон"
+            r"(?i)\b(\d{1,3})(?:-?[а-яё]{1,2})?\s+сезон",
+            // "Season 5", "Seasons 1-5"
+            r"(?i)\bseasons?:?\s*(\d{1,3})(?:\s*[-–]\s*(\d{1,3}))?",
+            // "5th Season"
+            r"(?i)\b(\d{1,2})(?:st|nd|rd|th)\s+season\b",
+            // "S05", "S1-S5", "S1-5" (but not S05E03)
+            r"(?i)\bs(\d{1,2})(?:\s*[-–]\s*s?(\d{1,2}))?\b",
+            // "TV-2", "ТВ 3"
+            r"(?i)\b(?:tv|тв)[-\s]?(\d{1,2})\b",
+        ]
+        .iter()
+        .map(|p| Regex::new(p).unwrap())
+        .collect()
+    });
+
+    let mut out = Vec::new();
+    for re in PATTERNS.iter() {
+        for caps in re.captures_iter(title) {
+            let Some(start) = caps.get(1).and_then(|m| m.as_str().parse::<i64>().ok()) else {
+                continue;
+            };
+            let end = caps
+                .get(2)
+                .and_then(|m| m.as_str().parse::<i64>().ok())
+                .filter(|e| *e >= start && *e - start <= 100)
+                .unwrap_or(start);
+            out.extend(start..=end);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// Latest 4-digit year mentioned in a title ("[2011-2015, США, ...]" → 2015).
+pub fn title_max_year(title: &str) -> Option<i64> {
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\b(19[5-9]\d|20[0-4]\d)\b").unwrap());
+    RE.find_iter(title)
+        .filter_map(|m| m.as_str().parse::<i64>().ok())
+        .max()
+}
+
+/// Does a rutracker title plausibly contain the season we're looking for?
+///
+/// rutracker ignores `-` in queries, so "Grimm TV-5 2015" happily matches
+/// "Grimm / Сезоны: 1-4 [2011-2014]". Reject a title when
+/// - it names seasons explicitly and none of them is in `expected`, or
+/// - every year it mentions is older than the season's air year.
+///
+/// Titles without any marker pass (we can't tell, and manual search shows them anyway).
+pub fn title_matches_season(title: &str, expected: &[i64], season_year: Option<i64>) -> bool {
+    let claimed = title_season_numbers(title);
+    if !claimed.is_empty() && !claimed.iter().any(|n| expected.contains(n)) {
+        return false;
+    }
+    if let (Some(year), Some(max_year)) = (season_year, title_max_year(title))
+        && max_year + 1 < year
+    {
+        return false;
+    }
+    true
+}
+
+/// Season numbers a release for this season may be labelled with: the DB
+/// season number, the TV-only index (anime skips OVAs/movies) and the number
+/// parsed from an AniList season title ("X 2nd Season").
+pub fn expected_season_numbers(season: &Season, tv_season_number: i64) -> Vec<i64> {
+    let mut out = vec![season.season_number, tv_season_number];
+    if let Some(title) = season.title.as_deref() {
+        let (_, n) = parse_anime_season_title(title);
+        out.push(n);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 fn is_generic_season_name(name: &str) -> bool {
     static RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(?i)^(season|сезон|specials?)\s*\d*$").unwrap());
@@ -184,6 +281,8 @@ mod tests {
             overview: None,
             anilist_id: None,
             status: "tracking".to_string(),
+            rating: None,
+            source_status: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -261,6 +360,83 @@ mod tests {
         );
         assert_eq!(season_air_year(&[ep(None), ep(Some(""))]), None);
         assert_eq!(season_air_year(&[]), None);
+    }
+
+    #[test]
+    fn test_title_season_numbers() {
+        assert_eq!(
+            title_season_numbers("Гримм / Grimm / Сезон: 5 / Серии: 1-22 из 22 [2015-2016, США]"),
+            vec![5]
+        );
+        assert_eq!(
+            title_season_numbers("Гримм / Grimm / Сезоны: 1-4 / Серии: 1-88 из 88 [2011-2014]"),
+            vec![1, 2, 3, 4]
+        );
+        assert_eq!(
+            title_season_numbers("Grimm [S05] (2015) WEB-DL 1080p"),
+            vec![5]
+        );
+        assert_eq!(
+            title_season_numbers("Grimm S01-S03 [2011-2013]"),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            title_season_numbers("Grimm S05E03 1080p"),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            title_season_numbers("Атака титанов (ТВ-4) / Shingeki no Kyojin: The Final Season"),
+            vec![4]
+        );
+        assert_eq!(
+            title_season_numbers("Boku no Hero Academia 5th Season [TV-5] [2021]"),
+            vec![5]
+        );
+        assert_eq!(title_season_numbers("Гримм 3 сезон LostFilm"), vec![3]);
+        assert_eq!(
+            title_season_numbers("Some Film [2015, BDRip 1080p]"),
+            Vec::<i64>::new()
+        );
+    }
+
+    #[test]
+    fn test_title_max_year() {
+        assert_eq!(title_max_year("Grimm [2011-2015, США, 1080p]"), Some(2015));
+        assert_eq!(title_max_year("Grimm 2160p x265"), None);
+        assert_eq!(title_max_year("Blade Runner 2049 (2017)"), Some(2049));
+    }
+
+    #[test]
+    fn test_title_matches_season() {
+        let old_pack = "Гримм / Grimm / Сезоны: 1-4 / Серии: 1-88 из 88 [2011-2014, США]";
+        let new_season = "Гримм / Grimm / Сезон: 5 / Серии: 1-22 из 22 [2015-2016, США]";
+        let full_pack = "Гримм / Grimm / Сезоны: 1-5 [2011-2016, США]";
+        let no_marker = "Гримм / Grimm [2015, США, WEB-DL]";
+        let old_no_marker = "Гримм / Grimm [2011, США, WEB-DL]";
+
+        assert!(!title_matches_season(old_pack, &[5], Some(2015)));
+        assert!(title_matches_season(new_season, &[5], Some(2015)));
+        assert!(title_matches_season(full_pack, &[5], Some(2015)));
+        assert!(title_matches_season(no_marker, &[5], Some(2015)));
+        assert!(!title_matches_season(old_no_marker, &[5], Some(2015)));
+        // One year of slack for off-by-one air dates between TMDB and rutracker.
+        assert!(title_matches_season("Grimm [2014]", &[5], Some(2015)));
+        // Unknown season year → only season markers matter.
+        assert!(title_matches_season(old_no_marker, &[5], None));
+        assert!(!title_matches_season(old_pack, &[5], None));
+        // Anime: any of the expected numberings counts.
+        assert!(title_matches_season(
+            "Show (ТВ-2) [2020]",
+            &[2, 3],
+            Some(2020)
+        ));
+    }
+
+    #[test]
+    fn test_expected_season_numbers() {
+        let mut season = test_season(3);
+        season.title = Some("Show 2nd Season".to_string());
+        assert_eq!(expected_season_numbers(&season, 2), vec![2, 3]);
     }
 
     #[test]

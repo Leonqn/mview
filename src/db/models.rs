@@ -15,6 +15,11 @@ pub struct Media {
     pub overview: Option<String>,
     pub anilist_id: Option<i64>,
     pub status: String,
+    /// Source rating on a 0–10 scale (TMDB vote_average, AniList averageScore/10).
+    pub rating: Option<f64>,
+    /// Normalized show status from the metadata source: "ended" | "returning".
+    /// None for movies or when the source didn't say.
+    pub source_status: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

@@ -265,6 +265,18 @@ async fn check_single_series(
     // Fetch TMDB TV details
     let tv_details = state.tmdb.get_tv(tmdb_id).await?;
 
+    // Keep rating / show status fresh — the dashboard groups on them.
+    {
+        let pool = state.db.clone();
+        let rating = tv_details.rating();
+        let source_status = tv_details.source_status();
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get()?;
+            queries::update_media_meta(&conn, media_id, rating, source_status.as_deref())
+        })
+        .await??;
+    }
+
     let tmdb_seasons = match tv_details.seasons {
         Some(ref seasons) => seasons,
         None => {
@@ -584,6 +596,8 @@ mod tests {
                     overview: None,
                     anilist_id: None,
                     status: "tracking".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -605,6 +619,8 @@ mod tests {
                     overview: None,
                     anilist_id: None,
                     status: "tracking".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -626,6 +642,8 @@ mod tests {
                     overview: None,
                     anilist_id: None,
                     status: "completed".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -661,6 +679,8 @@ mod tests {
                 overview: None,
                 anilist_id: None,
                 status: "tracking".to_string(),
+                rating: None,
+                source_status: None,
                 created_at: String::new(),
                 updated_at: String::new(),
             },

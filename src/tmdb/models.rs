@@ -87,7 +87,25 @@ pub struct TmdbTvDetails {
     pub number_of_episodes: Option<i64>,
     pub seasons: Option<Vec<TmdbSeasonSummary>>,
     pub vote_average: Option<f64>,
+    /// "Returning Series" | "Ended" | "Canceled" | "In Production" | ...
+    pub status: Option<String>,
     pub external_ids: Option<TmdbExternalIds>,
+}
+
+impl TmdbTvDetails {
+    /// Normalized show status: "ended" for Ended/Canceled, "returning" otherwise.
+    pub fn source_status(&self) -> Option<String> {
+        let status = match self.status.as_deref()? {
+            "Ended" | "Canceled" => "ended",
+            _ => "returning",
+        };
+        Some(status.to_string())
+    }
+
+    /// vote_average with TMDB's "0 = no votes" placeholder mapped to None.
+    pub fn rating(&self) -> Option<f64> {
+        self.vote_average.filter(|v| *v > 0.0)
+    }
 }
 
 /// Season summary as returned in TV details.

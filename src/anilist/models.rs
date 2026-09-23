@@ -32,6 +32,9 @@ pub struct AniListMedia {
     pub format: Option<String>,
     pub status: Option<String>,
     pub description: Option<String>,
+    /// Mean score on a 0–100 scale.
+    #[serde(rename = "averageScore", default)]
+    pub average_score: Option<i64>,
     #[serde(rename = "coverImage")]
     pub cover_image: Option<AniListCoverImage>,
     #[serde(rename = "airingSchedule")]
@@ -225,6 +228,23 @@ impl AniListSearchItem {
     }
 }
 
+/// Normalized show status for a sequel chain: "ended" when the last entry has
+/// finished airing (no sequel is known), "returning" while anything is still
+/// airing or announced.
+pub fn chain_source_status(chain: &[AniListMedia]) -> Option<String> {
+    let last = chain.last()?;
+    let status = match last.status.as_deref() {
+        Some("FINISHED") | Some("CANCELLED") => "ended",
+        _ => "returning",
+    };
+    Some(status.to_string())
+}
+
+/// AniList averageScore (0–100) mapped to the 0–10 scale used for TMDB.
+pub fn rating_from_score(score: Option<i64>) -> Option<f64> {
+    score.filter(|s| *s > 0).map(|s| s as f64 / 10.0)
+}
+
 fn strip_html(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut in_tag = false;
@@ -348,6 +368,7 @@ mod tests {
             cover_image: Some(AniListCoverImage {
                 large: Some("https://example.com/cover.jpg".into()),
             }),
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: Vec::new(),
             relations: None,
@@ -380,6 +401,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: Vec::new(),
             relations: None,
@@ -404,6 +426,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: vec![
                 AniListStreamingEpisode {

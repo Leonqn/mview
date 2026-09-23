@@ -184,6 +184,8 @@ async fn track_movie(state: &AppState, tmdb_id: i64) -> anyhow::Result<i64> {
         overview: details.overview,
         anilist_id: None,
         status: "tracking".to_string(),
+        rating: details.vote_average.filter(|v| *v > 0.0),
+        source_status: None,
         created_at: String::new(),
         updated_at: String::new(),
     };
@@ -255,6 +257,8 @@ async fn track_movie_collection(
         overview: collection.overview.clone(),
         anilist_id: None,
         status: "tracking".to_string(),
+        rating: tracked_movie.vote_average.filter(|v| *v > 0.0),
+        source_status: None,
         created_at: String::new(),
         updated_at: String::new(),
     };
@@ -374,6 +378,9 @@ async fn track_series_with_type(
         .as_ref()
         .and_then(|ext| ext.imdb_id.clone());
 
+    let rating = details.rating();
+    let source_status = details.source_status();
+
     let media = Media {
         id: 0,
         media_type: media_type.to_string(),
@@ -388,6 +395,8 @@ async fn track_series_with_type(
         overview: details.overview,
         anilist_id: None,
         status: "tracking".to_string(),
+        rating,
+        source_status,
         created_at: String::new(),
         updated_at: String::new(),
     };
@@ -734,10 +743,13 @@ async fn track_anime(state: &AppState, anilist_id: i64) -> anyhow::Result<i64> {
         };
 
         let season_data = build_anime_season_data(&chain);
+        let upgrade_rating = crate::anilist::models::rating_from_score(clicked.average_score);
+        let upgrade_status = crate::anilist::models::chain_source_status(&chain);
         tokio::task::spawn_blocking(move || {
             let conn = pool.get()?;
             let tx = conn.unchecked_transaction()?;
             queries::update_media_anilist(&tx, mid, anilist_id, "anime")?;
+            queries::update_media_meta(&tx, mid, upgrade_rating, upgrade_status.as_deref())?;
             queries::delete_seasons_for_media(&tx, mid)?;
             for (mut season, episodes) in season_data {
                 season.media_id = mid;
@@ -822,6 +834,8 @@ async fn track_anime(state: &AppState, anilist_id: i64) -> anyhow::Result<i64> {
         overview,
         anilist_id: Some(anilist_id),
         status: "tracking".to_string(),
+        rating: crate::anilist::models::rating_from_score(clicked.average_score),
+        source_status: crate::anilist::models::chain_source_status(&chain),
         created_at: String::new(),
         updated_at: String::new(),
     };
@@ -1231,6 +1245,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: (0..=25)
                 .map(|n| AniListStreamingEpisode {
@@ -1274,6 +1289,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: (1..=raw_count)
                 .map(|n| AniListStreamingEpisode {
@@ -1319,6 +1335,7 @@ mod tests {
             status: None,
             description: None,
             cover_image: None,
+            average_score: None,
             airing_schedule: None,
             streaming_episodes: (1..=max)
                 .map(|n| AniListStreamingEpisode {
@@ -1461,6 +1478,8 @@ anime_dir = "/tmp/anime"
             overview: Some("A test movie".to_string()),
             anilist_id: None,
             status: "tracking".to_string(),
+            rating: None,
+            source_status: None,
             created_at: String::new(),
             updated_at: String::new(),
         };
@@ -1601,6 +1620,8 @@ anime_dir = "/tmp/anime"
             overview: None,
             anilist_id: None,
             status: "tracking".to_string(),
+            rating: None,
+            source_status: None,
             created_at: String::new(),
             updated_at: String::new(),
         };
@@ -1705,6 +1726,8 @@ anime_dir = "/tmp/anime"
                     overview: None,
                     anilist_id: None,
                     status: "tracking".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -1782,6 +1805,8 @@ anime_dir = "/tmp/anime"
                     overview: None,
                     anilist_id: None,
                     status: "tracking".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },
@@ -1854,6 +1879,8 @@ anime_dir = "/tmp/anime"
                     overview: None,
                     anilist_id: None,
                     status: "tracking".to_string(),
+                    rating: None,
+                    source_status: None,
                     created_at: String::new(),
                     updated_at: String::new(),
                 },

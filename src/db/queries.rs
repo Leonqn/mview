@@ -20,6 +20,8 @@ fn row_to_media(row: &rusqlite::Row) -> rusqlite::Result<Media> {
         overview: row.get(10)?,
         anilist_id: row.get(11)?,
         status: row.get(12)?,
+        rating: row.get(15)?,
+        source_status: row.get(16)?,
         created_at: row.get(13)?,
         updated_at: row.get(14)?,
     })
@@ -27,8 +29,8 @@ fn row_to_media(row: &rusqlite::Row) -> rusqlite::Result<Media> {
 
 pub fn insert_media(conn: &Connection, media: &Media) -> Result<i64> {
     conn.execute(
-        "INSERT INTO media (media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        "INSERT INTO media (media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, rating, source_status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             media.media_type,
             media.title,
@@ -42,6 +44,8 @@ pub fn insert_media(conn: &Connection, media: &Media) -> Result<i64> {
             media.overview,
             media.anilist_id,
             media.status,
+            media.rating,
+            media.source_status,
         ],
     )
     .with_context(|| "Failed to insert media")?;
@@ -51,7 +55,7 @@ pub fn insert_media(conn: &Connection, media: &Media) -> Result<i64> {
 pub fn get_media(conn: &Connection, id: i64) -> Result<Option<Media>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at
+            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at, rating, source_status
              FROM media WHERE id = ?1",
         )
         .with_context(|| "Failed to prepare get_media")?;
@@ -71,7 +75,7 @@ pub fn get_media_by_tmdb_id(
 ) -> Result<Option<Media>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at
+            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at, rating, source_status
              FROM media WHERE tmdb_id = ?1 AND media_type = ?2",
         )
         .with_context(|| "Failed to prepare get_media_by_tmdb_id")?;
@@ -87,7 +91,7 @@ pub fn get_media_by_tmdb_id(
 pub fn get_media_by_anilist_id(conn: &Connection, anilist_id: i64) -> Result<Option<Media>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at
+            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at, rating, source_status
              FROM media WHERE anilist_id = ?1",
         )
         .with_context(|| "Failed to prepare get_media_by_anilist_id")?;
@@ -103,7 +107,7 @@ pub fn get_media_by_anilist_id(conn: &Connection, anilist_id: i64) -> Result<Opt
 pub fn find_media_by_title(conn: &Connection, title: &str) -> Result<Option<Media>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at
+            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at, rating, source_status
              FROM media WHERE title = ?1 COLLATE NOCASE OR title_original = ?1 COLLATE NOCASE LIMIT 1",
         )
         .with_context(|| "Failed to prepare find_media_by_title")?;
@@ -136,10 +140,26 @@ pub fn update_media_anilist(
     Ok(())
 }
 
+/// Refresh source-derived metadata (rating, show status) without touching
+/// user-owned fields. Called from the periodic TMDB/AniList checks.
+pub fn update_media_meta(
+    conn: &Connection,
+    id: i64,
+    rating: Option<f64>,
+    source_status: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE media SET rating = COALESCE(?1, rating), source_status = COALESCE(?2, source_status), updated_at = datetime('now') WHERE id = ?3",
+        params![rating, source_status, id],
+    )
+    .with_context(|| "Failed to update media meta")?;
+    Ok(())
+}
+
 pub fn get_all_media(conn: &Connection) -> Result<Vec<Media>> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at
+            "SELECT id, media_type, title, title_original, year, tmdb_id, imdb_id, kinopoisk_url, world_art_url, poster_url, overview, anilist_id, status, created_at, updated_at, rating, source_status
              FROM media ORDER BY created_at DESC",
         )
         .with_context(|| "Failed to prepare get_all_media")?;
@@ -735,6 +755,8 @@ mod tests {
             overview: Some("A test series".to_string()),
             anilist_id: None,
             status: "tracking".to_string(),
+            rating: None,
+            source_status: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
